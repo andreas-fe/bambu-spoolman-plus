@@ -7,8 +7,8 @@ Eine leichtgewichtige, containerisierte Schnittstelle zur automatischen Erfassun
 ## Highlights & Gelöste Herausforderungen
 
 1. **Grammgenaue Slicer-Verbräuche via Implizites FTPS (Port 990)**:
-   - Lädt beim Druckstart die Modelldatei (\`.3mf\` bzw. \`.gcode.3mf\`) rein im Arbeitsspeicher (\`io.BytesIO\`) herunter – kein Datenmüll auf der Festplatte.
-   - Parst \`Metadata/slice_info.config\` für exakte \`used_g\`-Werte pro Schacht.
+   - Lädt beim Druckstart die Modelldatei (\`.3mf\` bzw. \`.gcode.3mf\`) rein im Arbeitsspeicher (\`io.BytesIO\`) herunter.
+   - **Kein Datenmüll**: Die Modelldatei wird zu keinem Zeitpunkt auf der Festplatte zwischengespeichert und nach dem Extrahieren der \`slice_info.config\` sofort verworfen.
 
 2. **Schacht-Zuverlässigkeit & Unload-Schutz (State-Locking)**:
    - Verhindert Fehlbuchungen durch den automatischen Filamentrückzug (*Unload* / Code \`255\`) bei Druckende (100 %).
@@ -18,8 +18,9 @@ Eine leichtgewichtige, containerisierte Schnittstelle zur automatischen Erfassun
    - Liest verschachtelte Status-Bits (\`ams.tray_now\`, \`ams.tray_tar\`) mit automatischer 0-Index-Korrektur aus.
 
 4. **Ressourcenschonend & Wartungsfrei**:
-   - Rolling Ring-Buffer für Web-Logs (\`maxlen=250\`) – kein Speicherüberlauf.
-   - Vollständig lokal ohne Cloud-Zwang.
+   - **Kein Speicherüberlauf**: Web-Logs werden in einem Python-Ringpuffer (\`deque(maxlen=250)\`) gehalten. Älteste Einträge verfallen automatisch.
+   - Integrierte Docker-Log-Rotation (\`max-size: 10m\`, \`max-file: 3\`).
+   - Vollständig lokaler Betrieb ohne Cloud-Zwang.
 
 ---
 
@@ -27,20 +28,20 @@ Eine leichtgewichtige, containerisierte Schnittstelle zur automatischen Erfassun
 
 ```mermaid
 flowchart TD
-    subgraph Printer [Bambu Lab 3D Drucker]
+    subgraph Printer ["Bambu Lab 3D Drucker"]
         direction TB
-        MQTT[MQTT Broker :8883<br>Telemetrie & Schacht-Status]
-        FTPS[FTPS Server :990<br>.3mf / slice_info.config]
+        MQTT["MQTT Broker :8883<br>Telemetrie & Schacht-Status"]
+        FTPS["FTPS Server :990<br>.3mf / slice_info.config"]
     end
 
-    subgraph Bridge [Bambu-Spoolman Bridge :7913]
+    subgraph Bridge ["Bambu-Spoolman Bridge :7913"]
         direction TB
-        Engine[State Tracker & Slicer Parser]
-        UI[Web-UI & Manuelle Buchung]
+        Engine["State Tracker & Slicer Parser"]
+        UI["Web-UI & Manuelle Buchung"]
     end
 
-    subgraph Storage [Spoolman :7912]
-        API[REST API<br>/api/v1/spool/{id}/use]
+    subgraph Storage ["Spoolman :7912"]
+        API["REST API<br>/api/v1/spool/use"]
     end
 
     MQTT -->|tray_now, gcode_state| Engine
