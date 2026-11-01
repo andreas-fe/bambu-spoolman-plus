@@ -6,6 +6,15 @@ Eine leichtgewichtige, containerisierte Schnittstelle zur automatischen Erfassun
 
 ---
 
+## Voraussetzungen
+
+- **Laufende Spoolman-Instanz**: Eine funktionierende Spoolman-Installation (z. B. via mitgelieferter \`docker-compose.yml\` oder extern erreichbar).
+- **Gepflegter Spulenbestand**: In Spoolman müssen deine verwendeten Filamente und Spulen bereits angelegt sein, damit sie in der Bridge-Weboberfläche den einzelnen Slots zugewiesen werden können.
+- **Bambu Lab 3D-Drucker**: Im lokalen Netzwerk erreichbar mit aktiviertem LAN-Modus (bzw. bekanntem LAN-Zugangscode und Port-Freigabe für Port 8883 MQTT & Port 990 FTPS).
+- **Docker & Docker Compose**: Auf dem Hostsystem installiert.
+
+---
+
 ## Highlights & Gelöste Herausforderungen
 
 1. **Grammgenaue Slicer-Verbräuche via Implizites FTPS (Port 990)**:
