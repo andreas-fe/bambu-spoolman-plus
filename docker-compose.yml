@@ -1,20 +1,37 @@
 services:
-  bridge:
-    build: ./bridge
-    container_name: bambu-spoolman
+  spoolman:
+    image: ghcr.io/donkie/spoolman:latest
+    container_name: spoolman
     restart: unless-stopped
+    volumes:
+      - ./data/spoolman:/home/app/.local/share/spoolman
+    ports:
+      - "7912:8000"
+    environment:
+      - TZ=Europe/Berlin
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  bambu-bridge:
+    build: ./bridge
+    container_name: bambu-spoolman-bridge
+    restart: unless-stopped
+    depends_on:
+      - spoolman
     ports:
       - "7913:7913"
-    volumes:
-      - /share/daten/container/bambu-spoolman/data:/app/data
     environment:
-      - BAMBU_HOST=10.10.10.48
-      - BAMBU_ACCESS_CODE=30485337
-      - BAMBU_SERIAL=03919D550409147
+      - BAMBU_HOST=${BAMBU_HOST}
+      - BAMBU_ACCESS_CODE=${BAMBU_ACCESS_CODE}
+      - BAMBU_SERIAL=${BAMBU_SERIAL}
       - SPOOLMAN_URL=http://spoolman:8000
-    networks:
-      - 3dprint-net
-
-networks:
-  3dprint-net:
-    external: true
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
