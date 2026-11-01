@@ -1,0 +1,20 @@
+services:
+  bridge:
+    build: ./bridge
+    container_name: bambu-spoolman
+    restart: unless-stopped
+    ports:
+      - "7913:7913"
+    volumes:
+      - /share/daten/container/bambu-spoolman/data:/app/data
+    environment:
+      - BAMBU_HOST=10.10.10.48
+      - BAMBU_ACCESS_CODE=30485337
+      - BAMBU_SERIAL=03919D550409147
+      - SPOOLMAN_URL=http://spoolman:8000
+    networks:
+      - 3dprint-net
+
+networks:
+  3dprint-net:
+    external: true
