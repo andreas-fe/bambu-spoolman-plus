@@ -2,6 +2,8 @@
 
 Eine leichtgewichtige, containerisierte Schnittstelle zur automatischen Erfassung des Filamentverbrauchs von **Bambu Lab 3D-Druckern** (A1-Serie, P1-Serie, X1-Serie) in **Spoolman**.
 
+![Webinterface](screenshot.png)
+
 ---
 
 ## Highlights & Gelöste Herausforderungen
