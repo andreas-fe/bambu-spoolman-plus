@@ -1,7 +1,14 @@
 .env
+.env.*
+!.env.example
 data/
+backups/
+.deploy/
+*.sqlite*
+*.db
 *.json
 *.3mf
 __pycache__/
 *.py[cod]
 .venv/
+.pytest_cache/
