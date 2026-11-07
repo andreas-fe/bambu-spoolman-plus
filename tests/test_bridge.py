@@ -560,3 +560,37 @@ def test_historical_confirmation_is_readable_without_changing_audit_data(bridge)
     bridge.store.set_deduction_status(row['id'],'DONE','HTTP 200; Zuordnung vom Drucker')
     assert bridge.store.list_deductions()[0]['detail']=='Buchung durch Spoolman bestätigt; Zuordnung vom Drucker'
     assert bridge.store.deductions_for_job(job)[0]['detail']=='HTTP 200; Zuordnung vom Drucker'
+
+
+def test_changed_slicer_color_explains_unmapped_and_keeps_known_slot(bridge, monkeypatch):
+    b=bridge
+    b.AUTO_MATCH_FILAMENTS=True
+    b.ams_state={int(k):dict(v) for k,v in inventory().items()}
+    job=finished_job(b,{1:0.42,2:1.29},ams=[])
+    b.store.update_job(job,filaments_json=json.dumps({'1':{'color':'#FFFFFF','material':'PLA'},'2':{'color':'#80FF80','material':'PLA'}}))
+    send=Mock()
+    monkeypatch.setattr(b,'send_spoolman_deduction',send)
+    b.process_job(job)
+    rows=b.store.deductions_for_job(job)
+    assert [(r['status'],r['tray_id'],r['grams']) for r in rows]==[('PENDING',1,0.42),('UNMAPPED',None,1.29)]
+    assert '#80FF80' in rows[1]['detail'] and 'PLA' in rows[1]['detail']
+    assert '#80FF80' in b.store.get_job(job)['error']
+    send.assert_not_called()
+    form=next(j for j in b.job_mapping_forms() if j['id']==job)
+    assert form['filaments'][0]['tray']==1
+    assert form['filaments'][1]['color']=='80FF80'
+    assert form['assignment_summary']=='1 von 2 Filamenten zugeordnet'
+    assert '#104831' in form['slot_labels'][0]
+    monkeypatch.setattr(b,'fetch_spoolman_spools',lambda:[])
+    page=b.app.test_client().get('/')
+    assert page.status_code==200 and b'#80FF80' in page.data
+
+
+def test_matching_color_with_missing_spool_mapping_explains_actual_problem(bridge):
+    b=bridge;b.AUTO_MATCH_FILAMENTS=True
+    b.ams_state={int(k):dict(v) for k,v in inventory().items()}
+    b.save_mapping({'0':None,'1':'20'})
+    job=finished_job(b,{1:1},ams=[])
+    b.store.update_job(job,filaments_json=json.dumps({'1':{'color':'#104831','material':'PLA'}}))
+    b.process_job(job)
+    assert 'keine Spoolman-Spulenzuordnung' in b.store.deductions_for_job(job)[0]['detail']

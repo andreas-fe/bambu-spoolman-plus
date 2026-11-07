@@ -34,7 +34,7 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 # Metadaten & Konfiguration
 # ---------------------------------------------------------------------------
 
-APP_VERSION = "v2.4.1"
+APP_VERSION = "v2.4.2"
 APP_BUILD_TIME = "07.11.2026"
 
 PRINTER_IP = os.getenv("BAMBU_HOST", "").strip()
@@ -712,10 +712,23 @@ def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, sto
                         and str(tray.get('material') or '').strip().upper() == str(filament.get('material') or '').strip().upper()):
                     if slot not in candidates: candidates.append(slot)
             if primary is None and candidates: sources.add('AUTO_COLOR_MATERIAL')
+        matched_slots = list(candidates)
         candidates = [slot for slot in candidates if slots.get('external' if slot == 254 else str(slot))]
         if not candidates:
+            color = normalized_color(filament.get('color'))
+            material = str(filament.get('material') or '').strip()
+            if matched_slots:
+                detail = 'Passender AMS-Slot hat keine Spoolman-Spulenzuordnung.'
+            elif job.get('mapping_source') == 'USER':
+                detail = f'Filament {filament_id} wurde keinem AMS-Slot zugeordnet.'
+            elif not color or not material:
+                detail = f'Slicer-Farbe oder Material für Filament {filament_id} fehlt.'
+            elif not any(tray.get('known') for tray in inventory.values()):
+                detail = 'AMS-Daten zum Druckbeginn fehlen.'
+            else:
+                detail = f'Keine AMS-Übereinstimmung für Slicer-Farbe #{color} und Material {material}.'
             rows.append(dict(source_key=f'filament:{filament_id}', filament_id=filament_id, tray_id=None,
-                             spool_id=None, grams=total/100, status='UNMAPPED', detail='Filament oder Spoolman-Spule nicht zugeordnet'))
+                             spool_id=None, grams=total/100, status='UNMAPPED', detail=detail))
             continue
         def spool_for(slot): return str(slots['external' if slot == 254 else str(slot)])
         def order(slot):
@@ -819,7 +832,8 @@ def process_job(job_id: str) -> None:
         return
     if not store.replace_unattempted_plan(job_id, rows): return
     if any(row['status'] == 'UNMAPPED' for row in rows):
-        store.update_job(job_id, state='WAITING_MAPPING', error='Zuordnung oder Restgewichte fehlen; gesamter Auftrag wartet.')
+        details = '; '.join(dict.fromkeys(row['detail'] for row in rows if row['status'] == 'UNMAPPED'))
+        store.update_job(job_id, state='WAITING_MAPPING', error=(details + ' Gesamter Auftrag wartet.')[:1000])
         return
     book_pending(job_id)
 
@@ -981,9 +995,21 @@ def job_mapping_forms():
         weights = json.loads(job['weights_json'] or '{}')
         mapping = json.loads(job['ams_mapping_json'] or '[]')
         mapping2 = json.loads(job['ams_mapping2_json'] or 'null')
+        metadata = json.loads(job.get('filaments_json') or '{}')
+        inventory = json.loads(job.get('ams_snapshot_json') or '{}')
+        planned = store.deductions_for_job(job['id'])
         ids = sorted(int(k) for k in weights) if weights else list(range(1, max(len(mapping), 4) + 1))
-        job['filaments'] = [{'id': i, 'grams': weights.get(str(i)),
-                             'tray': resolve_tray_for_filament(i, mapping, mapping2)} for i in ids]
+        job['filaments'] = []
+        for i in ids:
+            tray = resolve_tray_for_filament(i, mapping, mapping2)
+            if tray is None:
+                planned_trays = {row['tray_id'] for row in planned if row['filament_id'] == i and row['tray_id'] is not None}
+                if len(planned_trays) == 1: tray = planned_trays.pop()
+            fil = metadata.get(str(i), {})
+            job['filaments'].append({'id': i, 'grams': weights.get(str(i)), 'tray': tray,
+                                     'color': normalized_color(fil.get('color')), 'material': fil.get('material','')})
+        job['assignment_summary'] = (f"{sum(f['tray'] is not None for f in job['filaments'])} von {len(ids)} Filamenten zugeordnet" if weights else '')
+        job['slot_labels'] = {slot: f"AMS Slot {slot + 1}" + (f" · {inventory[str(slot)].get('material','')} · {inventory[str(slot)].get('color','')}" if inventory.get(str(slot),{}).get('known') else '') for slot in range(4)}
         forms.append(job)
     return forms
 
@@ -1114,13 +1140,16 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <strong>{{ job.subtask_name or job.filename or job.id[:8] }}</strong> · {{ job.state }}
     {% if job.mapping_source %}<span class="muted"> · Zuordnung: {{ job.mapping_source }}</span>{% endif %}
+    {% if job.assignment_summary %}<p><strong>{{ job.assignment_summary }}</strong></p>{% endif %}
     {% if job.error %}<p class="muted">{{ job.error }}</p>{% endif %}
     {% for filament in job.filaments %}
     <div class="slot">
-      <label for="{{ job.id }}-f{{ filament.id }}">Filament {{ filament.id }}{% if filament.grams is not none %} · {{ '%.2f'|format(filament.grams) }} g{% endif %}</label>
+      <label for="{{ job.id }}-f{{ filament.id }}">Filament {{ filament.id }}{% if filament.grams is not none %} · {{ '%.2f'|format(filament.grams) }} g{% endif %}
+        <span class="muted small" style="display:block">{% if filament.color %}<span class="swatch" style="background:#{{ filament.color }}"></span>#{{ filament.color }}{% endif %} {{ filament.material }}</span>
+      </label>
       <select id="{{ job.id }}-f{{ filament.id }}" name="filament_{{ filament.id }}">
         <option value="-1">— Nicht zugeordnet —</option>
-        {% for slot in range(4) %}<option value="{{ slot }}" {% if filament.tray == slot %}selected{% endif %}>AMS Slot {{ slot + 1 }}</option>{% endfor %}
+        {% for slot in range(4) %}<option value="{{ slot }}" {% if filament.tray == slot %}selected{% endif %}>{{ job.slot_labels[slot] }}</option>{% endfor %}
         <option value="254" {% if filament.tray == 254 %}selected{% endif %}>Externe Spule</option>
       </select>
     </div>

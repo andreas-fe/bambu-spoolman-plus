@@ -94,6 +94,12 @@ Die Zuordnung wird in dieser Reihenfolge ermittelt:
 
 Es gibt keine Suche nach einer nur ähnlichen Farbe. Die automatische Zuordnung setzt voraus, dass beim Druckstart keine absichtlich abweichende AMS-Farbe gewählt wird. Die externe Spule benötigt eine explizite Zuordnung. MQTT-Deltas erhalten bereits bekannte Attribute, statt fehlende Felder durch Standardwerte zu ersetzen.
 
+### Diagnose bei abweichenden Slicer-Farben
+
+Vertauschte Modellfarben sind grundsätzlich zulässig. Entscheidend sind jedoch die gespeicherten RGB-Werte, nicht nur Farbnamen wie „Grün“. Beispielsweise ist Slicer-PLA `#80FF80` kein exakter Treffer für AMS-PLA `#104831`. Weiß kann dabei korrekt erkannt werden, während Grün offenbleibt. Der gesamte Auftrag wartet dann, damit keine Teilabbuchung erfolgt.
+
+Das Journal und die Auftragsanzeige nennen die konkret nicht passende Slicer-Farbe und das Material. Im Zuordnungsformular werden außerdem die gespeicherten AMS-Farben angezeigt. Eindeutig erkannte Slots sind bereits vorausgewählt. Eine Bestätigung für einen einzelnen Auftrag wird nicht stillschweigend als dauerhaft gültige Farbzuordnung auf spätere Drucke übertragen.
+
 Die Zuordnung **AMS-Slot → Spoolman-Spule** muss beim Spulenwechsel zwischen Drucken aktualisiert werden. Der Auftrag behält seinen gespeicherten Stand; spätere Änderungen leiten bereits geplante oder versuchte Buchungen nicht auf eine neue Spule um.
 
 ## Gleichartige Spulen, Auto-Refill und Reserven

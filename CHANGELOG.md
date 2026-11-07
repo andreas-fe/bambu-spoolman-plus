@@ -1,5 +1,11 @@
 # Änderungen
 
+## v2.4.2 — 2026-11-07
+
+- Nicht zugeordnete Filamente nennen jetzt die konkrete Slicer-Farbe und das Material beziehungsweise eine fehlende Spoolman-Zuweisung oder fehlende AMS-Daten.
+- Zuordnungsformulare zeigen Slicer-Farben und Material sowie die zum Druckbeginn gespeicherten AMS-Farben. Bereits eindeutig geplante Slots sind vorausgewählt; der Bearbeitungsstand wird als Anzahl zugeordneter Filamente dargestellt.
+- Regressionstest für ein zweifarbiges Modell mit abweichendem Slicer-Grün ergänzt. Die exakte Farblogik bleibt erhalten und unvollständige Aufträge werden nicht teilweise abgebucht.
+
 ## v2.4.1 — 2026-11-07
 
 - Kommunikations- und Verarbeitungsflow in getrennte Diagrammabschnitte und eigene Einzelansichten für unabhängiges Zoomen aufgeteilt.
