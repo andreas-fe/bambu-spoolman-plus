@@ -88,6 +88,8 @@ Die [3MF- und Farbcode-FAQ](filament-workflow.md#kann-die-3mf-den-verwendeten-am
 
 `T0`, `T1` oder `M620 S0A` im G-Code bezeichnen nicht verlässlich die physische Slot-Auswahl, die beim Druckstart vorgenommen wird. Deshalb behandelt die Bridge Slicer-Filamentnummern und AMS-Slots getrennt. MQTT-Slots 0–3 entsprechen den sichtbaren AMS-Slots 1–4. `254` steht für die externe Spule, `255` für entladen/kein aktiver Slot. Entladen am Druckende verwirft keine gespeicherte Auftragszuordnung.
 
+Die [Verfügbarkeit der AMS-Belegung und des vollständigen Druckstart-Mappings](filament-workflow.md#kann-die-druckstart-zuordnung-separat-ausgelesen-werden) ist getrennt dokumentiert. Der lokale Statuskanal liefert nicht automatisch den Inhalt des Druckstart-Auftrags.
+
 Die Zuordnung wird in dieser Reihenfolge ermittelt:
 
 1. Ausdrücklich für den Auftrag bestätigte Zuordnung. Spätere MQTT-Meldungen überschreiben sie nicht.

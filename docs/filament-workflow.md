@@ -60,6 +60,22 @@ Der A1 hat das vollständige Mapping in den bisher untersuchten MQTT-Statusmeldu
 
 Das ist keine allgemeine Behauptung, dass ein 3MF-Archiv niemals zusätzliche Mapping-Metadaten enthalten könnte. Entscheidend ist, ob ein Feld nachweislich die tatsächlich verwendeten Slots **dieses Druckauftrags** beschreibt. Die bloße Existenz eines Feldes mit „map“ im Namen genügt nicht.
 
+### Kann die Druckstart-Zuordnung separat ausgelesen werden?
+
+Die vorhandene Verbindung liefert unterschiedliche Daten mit unterschiedlicher Aussagekraft:
+
+| Information | Aktuelle Verfügbarkeit |
+|---|---|
+| Welches Material und welche Farbe in jedem AMS-Slot konfiguriert sind | Wird über MQTT gelesen |
+| Welcher Slot aktuell aktiv ist und welche Slots während des Drucks beobachtet wurden | Wird über MQTT gelesen und für den Auftrag gespeichert |
+| Vollständige Zuordnung jedes Slicer-Filaments zum beim Druckstart gewählten AMS-Slot | In den bisher untersuchten Statusmeldungen dieses A1 nicht geliefert |
+
+Bambu Studio besitzt das vollständige Startmapping und setzt dafür unter anderem die gesonderten Parameter `ams_mapping` und `ams_mapping2`. Für die aktuelle Bridge ist das jedoch nicht automatisch ein zugänglicher Rückkanal vom Drucker.
+
+Ein gezielter lokaler MQTT-Test am 07.11.2026 bestätigte das Abonnement des Status-/Report-Themas. Beim anschließenden Versuch, das Request-Thema mitzulesen, wurde die separate Testverbindung beendet, ohne ein erfolgreiches Request-Abonnement zu bestätigen. Es wurden dabei keine Druckbefehle gesendet. Daraus lässt sich kein funktionierender Mitleseweg für die Startzuordnung ableiten; die genaue Ursache des Verbindungsabbruchs wurde vom Broker nicht benannt.
+
+Ein zusätzlicher Datenweg könnte die Zuordnung unmittelbar beim Senden eines Drucks an die Bridge übergeben und dort dem passenden Auftrag zuordnen. Damit wäre für diese Aufträge kein Farbvergleich zur Slot-Erkennung nötig. Ob eine solche Integration ohne Änderungen am verwendeten Slicer möglich ist und auch Drucke aus Bambu Handy oder von der SD-Karte erfasst, muss für den jeweiligen Startweg gesondert geprüft werden. Ein nachträglicher 3MF-Download ersetzt diesen Datenweg nicht.
+
 ## Welche Farbcodes darf ich im Slicer verwenden?
 
 **Die Bridge hat keine feste AMS-Farbtabelle und keine auf vier Werte beschränkte Freigabeliste.** Für ihren automatischen Farbvergleich zählt der tatsächlich vom AMS gemeldete RGB-Wert. Ein anderer Wert kann ein gültiger Slicer-Farbcode sein und trotzdem nicht automatisch zugeordnet werden.
