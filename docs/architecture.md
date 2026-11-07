@@ -84,6 +84,8 @@ flowchart LR
     S --> B["1,25 g buchen"]
 ```
 
+Die [3MF- und Farbcode-FAQ](filament-workflow.md#kann-die-3mf-den-verwendeten-ams-slot-verraten) trennt Filamentnummern, Extruder-Mapping und physische AMS-Slots. Insbesondere ist `filament_maps="1 1"` in den untersuchten A1-Dateien keine Liste zweier AMS-Ports, sondern eine Zuordnung beider Filamente zum selben Extruder. Die tatsächliche Druckstart-Zuordnung ist davon getrennt.
+
 `T0`, `T1` oder `M620 S0A` im G-Code bezeichnen nicht verlässlich die physische Slot-Auswahl, die beim Druckstart vorgenommen wird. Deshalb behandelt die Bridge Slicer-Filamentnummern und AMS-Slots getrennt. MQTT-Slots 0–3 entsprechen den sichtbaren AMS-Slots 1–4. `254` steht für die externe Spule, `255` für entladen/kein aktiver Slot. Entladen am Druckende verwirft keine gespeicherte Auftragszuordnung.
 
 Die Zuordnung wird in dieser Reihenfolge ermittelt:

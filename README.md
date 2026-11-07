@@ -107,7 +107,7 @@ Die Oberfläche zeigt den Verbindungsstatus. Die Buchung verwendet Spoolmans `PU
 
 ## AMS- und Druckdaten
 
-Für den täglichen Einsatz: [Schritt-für-Schritt-Anleitung für AMS, Slicer-Projekt und Spoolman](docs/filament-workflow.md). Sie erklärt auch, warum eine Profil-Standardfarbe allein nicht genügt und warum Spoolman seine reale Filamentfarbe behalten darf.
+Für den täglichen Einsatz: [Schritt-für-Schritt-Anleitung für AMS, Slicer-Projekt und Spoolman](docs/filament-workflow.md). Dort sind auch [die Grenzen der AMS-Slot-Erkennung aus 3MF-Dateien](docs/filament-workflow.md#kann-die-3mf-den-verwendeten-ams-slot-verraten) und [die Regeln für Slicer-Farbcodes](docs/filament-workflow.md#welche-farbcodes-darf-ich-im-slicer-verwenden) erklärt. Sie erklärt auch, warum eine Profil-Standardfarbe allein nicht genügt und warum Spoolman seine reale Filamentfarbe behalten darf.
 
 Slicer-Filament-IDs und `T0`/`T1` im G-Code sind keine verbindlichen physischen AMS-Slots: Die Auswahl beim Druckstart kann sie auf andere Slots abbilden.
 

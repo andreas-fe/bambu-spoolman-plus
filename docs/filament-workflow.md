@@ -39,6 +39,48 @@ Die Zuordnung im Druckstart-Dialog allein ist für diese Bridge kein Ersatz für
 
 Bambu Studio unterscheidet im Quellcode die Standardfarbe des Profils (`default_filament_colour`) von der Projektfarbe (`filament_colour`). Die AMS-Synchronisierung kann Projektfarben übernehmen bzw. ersetzen; die verwendete Synchronisierungsart und das Ergebnis sollten deshalb kontrolliert werden. Ein einmal gespeichertes Projekt mit korrekt zugewiesenen Filamenten kann als persönliche Vorlage dienen.
 
+## Kann die 3MF den verwendeten AMS-Slot verraten?
+
+**Aus den bisher untersuchten Druckdateien dieses A1 nicht zuverlässig.** Eine Bambu-3MF ist ein ZIP-Archiv mit Modellen, Projekt-/Slicer-Einstellungen und gegebenenfalls G-Code. Filamentnummern und Werkzeugwechsel darin sind nicht automatisch die beim Druckstart tatsächlich gewählten physischen AMS-Slots.
+
+Bei der erneuten Prüfung einer zweifarbigen Druckdatei wurden diese Angaben gefunden:
+
+| Angabe in der Datei | Was sie bedeutet | Physischer AMS-Slot eindeutig? |
+|---|---|---|
+| `filament.id="1"` bzw. `"2"` | Slicer-Filamentnummer | Nein |
+| `color`, `type`, `used_g` | Slicer-Farbe, Material und Grammzahl dieses Filaments | Nein; diese Daten ermöglichen den Farb-/Materialvergleich |
+| `tray_info_idx`, z. B. `GFL99` | Filament-/Materialprofilkennung | Nein; mehrere Slots können dieselbe Kennung haben |
+| `T0`, `T1`, `M620 S0A`, `M620 S1A` | Logische Filament-/Werkzeugwechsel im betreffenden Bambu-Druckablauf | Nicht ohne die dazugehörige Druckstart-Zuordnung |
+| `filament_map=[1,1]` bzw. `filament_maps="1 1"` | Beide Filamente sind demselben Extruder zugeordnet | Nein; der A1 hat einen Extruder, aber mehrere AMS-Slots |
+| `ams_mapping` / `ams_mapping2` | Gesonderte Slicer→AMS-Zuordnung für den Druckstart | Wäre relevant; in den untersuchten Datei-Metadaten nicht enthalten |
+
+Bambu Studio setzt die AMS-Zuordnung zusätzlich in den Parametern des Druckstart-Auftrags. Diese Auswahl kann anders sein, obwohl dieselbe Druckdatei verwendet wird. Ein gespeicherter Projektzustand wäre außerdem nicht automatisch ein Beleg für eine später abweichend gewählte Zuordnung oder einen tatsächlichen Auto-Refill-Wechsel.
+
+Der A1 hat das vollständige Mapping in den bisher untersuchten MQTT-Statusmeldungen nicht geliefert. Deshalb verwendet die Bridge bei fehlendem ausdrücklichem Mapping den dokumentierten Farb-/Materialvergleich. Ein verlässlich empfangenes Auftragsmapping oder eine ausdrückliche Benutzerzuordnung hat Vorrang.
+
+Das ist keine allgemeine Behauptung, dass ein 3MF-Archiv niemals zusätzliche Mapping-Metadaten enthalten könnte. Entscheidend ist, ob ein Feld nachweislich die tatsächlich verwendeten Slots **dieses Druckauftrags** beschreibt. Die bloße Existenz eines Feldes mit „map“ im Namen genügt nicht.
+
+## Welche Farbcodes darf ich im Slicer verwenden?
+
+**Die Bridge hat keine feste AMS-Farbtabelle und keine auf vier Werte beschränkte Freigabeliste.** Für ihren automatischen Farbvergleich zählt der tatsächlich vom AMS gemeldete RGB-Wert. Ein anderer Wert kann ein gültiger Slicer-Farbcode sein und trotzdem nicht automatisch zugeordnet werden.
+
+Beispiele für den Vergleich bei Materialtyp `PLA` und ohne separates Auftragsmapping:
+
+| AMS meldet | Aktuelles Slicer-Projekt enthält | Automatische Farbzuordnung |
+|---|---|---|
+| `#104831` | `#104831` | Passender Farb-/Materialtreffer |
+| `#104831` | `#80FF80` | Kein exakter Farbtreffer |
+| `#FFFFFF` | `#FFFFFF` | Passender Farb-/Materialtreffer |
+| Ein anderer gemeldeter RGB-Wert | Genau derselbe RGB-Wert | Ebenso möglich; keine feste Palette der Bridge |
+
+Mehrere gleichartige Slots werden anschließend nach den beschriebenen Nutzungs-/Bestandsregeln aufgeteilt. Das ändert nicht die Voraussetzung des vorherigen Farb-/Materialvergleichs.
+
+Die Bridge normalisiert Groß-/Kleinschreibung und das führende `#`. Bei einem vom Drucker gemeldeten RGBA-Wert wie `104831FF` wird der RGB-Anteil `#104831` verglichen. Es gibt keine automatische Toleranz für nur ähnliche Farbtöne.
+
+Für ein eigenes Slicer-Filamentprofil ist die zum tatsächlich verwendeten AMS-Filament passende **Standardfarbe** sinnvoll. Bei importierten Projekten anschließend die **aktive Projektfarbe** kontrollieren und gegebenenfalls angleichen. Materialtyp und Farbcode müssen zum AMS passen; Profilname, Herstellername und Reihenfolge der Projektfilamente müssen nicht der AMS-Slotnummer entsprechen. Nach Änderungen neu slicen.
+
+Die Bridge zeigt den aktuell empfangenen Materialtyp und Farbcode direkt unter jedem AMS-Slot. Diese Anzeige ist die praktische Referenz für den Slicer. Ist die AMS-Auswahl in einer Geräteansicht begrenzt, eine sinnvolle Farbe dort wählen und den gemeldeten Wert in den Slicer übernehmen. Ein frei gewählter Slicer-Farbton muss nicht umgekehrt im AMS erzwungen werden.
+
 ## Konkretes Beispiel
 
 Angenommen, der AMS meldet **PLA `#104831`**, während das Projekt **PLA `#80FF80`** enthält. Für den exakten Vergleich sind das unterschiedliche Farben.
@@ -66,6 +108,8 @@ Falls das Journal `UNMAPPED` zeigt, nennt es die konkret fehlende Übereinstimmu
 
 Geprüft am 07.11.2026 anhand des offiziellen Bambu-Studio-Projekts. Die Dialogbezeichnungen können von der installierten Version abweichen. Maßgeblich bleibt das Ergebnis im aktuellen Projekt und in den Druckdatei-Metadaten.
 
+- [Bambu-Studio-Druckstart: gesonderte AMS-Mappingparameter](https://github.com/bambulab/BambuStudio/blob/master/src/slic3r/GUI/Jobs/PrintJob.cpp)
+- [Bambu-3MF-Metadaten und Import von Filament-/Extruderzuordnungen](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/Format/bbs_3mf.cpp)
 - [Bambu-Studio-Konfiguration: Standardfarbe und aktive Filamentfarbe](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PrintConfig.cpp)
 - [Bambu-Studio-Projektkonfiguration und Übernahme von AMS-Farben](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PresetBundle.cpp)
 - [Bambu-Studio-Synchronisierungsdialog: Mapping und Überschreiben](https://github.com/bambulab/BambuStudio/blob/master/src/slic3r/GUI/SyncAmsDialog.cpp)

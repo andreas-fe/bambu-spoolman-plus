@@ -2,6 +2,8 @@
 
 ## v2.4.3 — 2026-11-07
 
+- 3MF-Filamentdaten, Extruder-Mapping und gesonderte AMS-Druckstart-Zuordnung dokumentiert; keine feste Farbcodeliste der Bridge, sondern Vergleich mit den tatsächlich gemeldeten AMS-RGB-Werten.
+
 - Alltagstauglichen Ablauf für AMS-Farben, aktuelle Slicer-Projektfarben und Spoolman-Bestandsdaten dokumentiert, einschließlich Synchronisierung, Filamentprofilen und importierten Projekten.
 - Tatsächlich empfangenen AMS-Materialtyp und RGB-Farbcode direkt unter jedem Slot angezeigt, damit der Slicer-Abgleich ohne Farbraten möglich ist.
 - Keine dauerhaften Farbfreigaben angelegt und keine Farben oder Materialdaten automatisch verändert.
