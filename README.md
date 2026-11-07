@@ -21,6 +21,14 @@ Lokale Docker-Bridge für Bambu Lab A1/A1 mini mit AMS Lite und eine **bereits l
 
 ## Kommunikation und Verarbeitung
 
+Jeder Flow steht in einem eigenen Diagrammfeld und lässt sich unabhängig öffnen und zoomen.
+
+### Kommunikationsflow
+
+Verbindungen zwischen Drucker, Bridge, Spoolman, Datenbank und Browser.
+
+[Einzelansicht öffnen und separat zoomen](docs/flows/communication.md)
+
 ```mermaid
 flowchart LR
     Printer["Bambu A1 / A1 mini<br/>AMS Lite"]
@@ -37,6 +45,14 @@ flowchart LR
     Bridge <--> Ledger
     Browser <-->|"HTTP :7913"| Bridge
 ```
+
+---
+
+### Verarbeitungsflow
+
+Verarbeitung vom Druckstart bis zur bestätigten Buchung oder Fehlerbehandlung.
+
+[Einzelansicht öffnen und separat zoomen](docs/flows/processing.md)
 
 ```mermaid
 flowchart TD

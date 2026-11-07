@@ -2,6 +2,8 @@
 
 ## v2.4.1 — 2026-11-07
 
+- Kommunikations- und Verarbeitungsflow in getrennte Diagrammabschnitte und eigene Einzelansichten für unabhängiges Zoomen aufgeteilt.
+
 - Erfolgreiche Buchungen werden als „Buchung durch Spoolman bestätigt“ angezeigt. Historische erfolgreiche HTTP-Details werden lesbar dargestellt, ohne gespeicherte Audit-Daten zu verändern.
 - Repository-Kurzbeschreibung ergänzt; README um Funktionsübersicht, Kommunikations- und Verarbeitungsdiagramme sowie einen aktuellen GUI-Screenshot mit anonymisierten Beispieldaten erweitert.
 - Detailliertes Konzept für MQTT, FTPS/3MF, Slicer-Verbrauchsdaten, Zuordnung, Spulenaufteilung, Reserven, Abbruchschätzung und sichere Wiederaufnahme dokumentiert.
