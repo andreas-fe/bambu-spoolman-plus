@@ -1,6 +1,6 @@
 # Bambu → Spoolman Bridge
 
-Lokale Docker-Bridge für Bambu Lab A1/A1 mini mit AMS Lite und eine **bereits laufende Spoolman-Instanz**. Nach `FINISH` werden die Slicer-Verbrauchswerte aus der gedruckten 3MF-Datei pro Filament der zugeordneten Spoolman-Spule belastet. Abgebrochene Drucke werden zur manuellen Korrektur protokolliert.
+Lokale Docker-Bridge für Bambu Lab A1/A1 mini mit AMS Lite und eine **bereits laufende Spoolman-Instanz**. Nach `FINISH` werden die Slicer-Verbrauchswerte aus der gedruckten 3MF-Datei pro Filament der zugeordneten Spoolman-Spule belastet. Bei Abbruch wird eine ausdrücklich gekennzeichnete Schätzung automatisch verbucht.
 
 ## Einrichtung
 
@@ -29,7 +29,19 @@ Die Oberfläche zeigt den Verbindungsstatus. Die Buchung verwendet Spoolmans `PU
 
 ## AMS- und Druckdaten
 
-Slicer-Filament-IDs sind keine physischen Slot-IDs. Die Bridge verwendet `ams_mapping` bzw. `ams_mapping2` aus den MQTT-Druckdaten. Bei fehlender Zuordnung wird **kein Slot geraten**; der Auftrag wartet mit `WAITING_MAPPING`. Unter „Druckaufträge und Filamentzuordnung“ lässt sich die Slicer→AMS-Zuordnung für genau diesen Auftrag bestätigen. Bereits verarbeitete Positionen sind gesperrt; die Bestätigung gilt nicht für spätere Drucke. Ob die Firmware diese Felder liefert, muss mit einem realen Druck geprüft werden. Mehrmaterialdruck und automatischer Spulenwechsel können ohne vollständige Zuordnung nicht zuverlässig abgerechnet werden.
+Slicer-Filament-IDs und `T0`/`T1` im G-Code sind keine verbindlichen physischen AMS-Slots: Die Auswahl beim Druckstart kann sie auf andere Slots abbilden.
+
+Die Bridge verwendet zuerst eine ausdrücklich bestätigte Zuordnung oder `ams_mapping`/`ams_mapping2` vom Drucker. Fehlen diese Daten, ist mit `AUTO_MATCH_FILAMENTS=true` ein exakter Vergleich von **RGB-Farbe und Materialtyp** möglich: Die 3MF-Filamentdaten werden mit einem gespeicherten AMS-Bestand zum Druckstart verglichen. Es gibt keine Farbtoleranz, keine Auswahl nach Ähnlichkeit und keinen Vergleich mit möglicherweise abweichenden Spoolman-Farben. Das Journal nennt die Quelle der automatischen Zuordnung.
+
+Diese Automatik setzt voraus, dass die Slicer-Farben den beim Druckstart tatsächlich gewählten AMS-Farben entsprechen. Bei absichtlich abweichender Farbauswahl die Zuordnung für den Auftrag ausdrücklich bestätigen oder `AUTO_MATCH_FILAMENTS=false` setzen. Die externe Spule wird nicht allein anhand einer Farbe automatisch gewählt.
+
+Bei mehreren passenden AMS-Spulen haben die während des Druckens beobachteten Slots Vorrang; anschließend werden Spulen mit dem kleinsten positiven Restgewicht zuerst berücksichtigt. Fehlt eine notwendige Zuordnung oder fehlen bei gleichartigen Spulen alle Restgewichte, wartet der **gesamte Auftrag** mit `WAITING_MAPPING`; auch andere Positionen bleiben vorerst ungebucht. Unter „Druckaufträge und Filamentzuordnung“ kann die Zuordnung für genau diesen Auftrag bestätigt werden. Positionen ohne bisherigen API-Versuch können dabei korrigiert werden. Bereits verarbeitete Positionen sind gesperrt; die Bestätigung gilt nicht für spätere Drucke.
+
+Beim **Spulenwechsel zwischen Drucken** immer die AMS-Slot→Spoolman-Spule-Zuordnung aktualisieren und Farbe sowie Material im Drucker korrekt pflegen. Für mehrere gleichartige Spulen wird die Menge anhand der zu Druckbeginn gespeicherten Restgewichte aufgeteilt, zum Beispiel 30 g aus der ersten und 70 g aus der zweiten Spule bei 100 g Gesamtverbrauch. Bereits für andere Slicer-Filamente reservierte Mengen werden dabei berücksichtigt. Diese Aufteilung ist eine **Schätzung**, keine Messung des tatsächlichen Wechselzeitpunkts.
+
+Reicht der Bestand der zugeordneten AMS-Spulen rechnerisch nicht, werden weitere nicht archivierte Spoolman-Spulen berücksichtigt, deren Farbe und Material exakt dem primären **Spoolman-Filament** entsprechen. Reservespulen ohne bestätigten AMS-Slot erscheinen im Journal mit „—“ als Schacht und einem entsprechenden Schätzungshinweis. Die Bridge legt keine Spule physisch ein und aktiviert **nicht** die Auto-Refill-Funktion des Druckers. Sind auch alle passenden Reserven rechnerisch aufgebraucht, wird die verbleibende Differenz der letzten passenden Spule belastet und ausdrücklich vermerkt. Korrekt gepflegte Restgewichte und Filamentdaten sind daher wichtig.
+
+Bei `FAILED`, `CANCEL`, `STOPPED`, `ERROR` und unerwartetem `IDLE` wird die letzte bekannte Fortschrittsangabe gespeichert und mit den Slicer-Grammwerten multipliziert. Beispiel: 100 g vollständig gesliced und Abbruch bei 40 % → 40 g geschätzt. Das ist keine Messung des bisherigen Materialverbrauchs; gerade bei Mehrmaterialdruck kann der echte Verbrauch anders verteilt sein. Bei 0 % entsteht keine positive Buchung, obwohl zum Beispiel Spülmaterial verbraucht worden sein kann. **Jede Schätzung ist im Journal gekennzeichnet.**
 
 Bei Dateien mit mehreren Druckplatten wird nur die durch `param=Metadata/plate_N.gcode` identifizierte Platte abgerechnet. Fehlt die Auswahl, wartet der Auftrag auf eindeutige Metadaten. Die heruntergeladene Datei wird nur im Arbeitsspeicher gehalten. Größenlimits: `MAX_3MF_BYTES` und `MAX_XML_BYTES`.
 
@@ -37,7 +49,7 @@ Die Slot→Spule-Zuordnung wird beim Druckstart gespeichert; spätere Spulenwech
 
 ## Journal und Wiederaufnahme
 
-SQLite speichert Drucke und jede einzelne Buchungsposition dauerhaft. Ein wiederholtes `FINISH` löst keine zweite Buchung aus. Bekannte Verbindungsfehler vor einer Buchung (`RETRY`) sowie fehlende Metadaten werden im Minutentakt erneut geprüft. Erfolgreiche Positionen werden dabei nicht wiederholt.
+SQLite speichert Drucke und jede einzelne Buchungsposition dauerhaft. Beim Druckstart erfasst ein Hintergrund-Worker Slicer-Metadaten und Spoolman-Restgewichte; laufende Drucke werden dabei noch nicht abgerechnet. Der Aufteilungsplan wird vor dem ersten API-Versuch eingefroren und bei Wiederholung nicht neu verteilt. Ein wiederholtes `FINISH` löst keine zweite Buchung aus. Bekannte Verbindungsfehler vor einer Buchung (`RETRY`) sowie fehlende Metadaten werden im Minutentakt erneut geprüft. Erfolgreiche Positionen werden dabei nicht wiederholt.
 
 Nach einem unklaren Antwortverlust, HTTP 5xx oder Neustart während einer API-Anfrage lautet der Status `UNKNOWN`. Hier ist eine manuelle Bestandsprüfung in Spoolman erforderlich: Die Verbrauchs-API bietet keine Idempotenzkennung, daher wäre eine automatische Wiederholung möglicherweise eine Doppelbuchung. `REJECTED` bedeutet eine abgelehnte Anfrage. `/api/status` liefert zusätzlich die Auftragszustände und Fehlerdetails. `/health` prüft die Anwendung, unabhängig von der Drucker-Erreichbarkeit.
 
@@ -62,7 +74,7 @@ Nach der ersten Migration bei weiteren Updates `--legacy` weglassen. Ein mit Pas
 
 Das Skript baut das Image vor dem Stoppen, verweigert Updates bei einem erkannten laufenden/pausierten Druck, stoppt ausschließlich die Bridge, sichert Konfiguration und Daten konsistent unter `backups/<Zeitstempel>/`, übernimmt die Daten und startet die neue Version. Abschließend werden Anwendung, Mount und Spoolman aus dem Container geprüft. Bei Fehlern wird der vorherige Stack wieder gestartet. Bei Pfadmigration bleibt das Quellverzeichnis als Rückfallbestand erhalten und wird nicht mehr verwendet.
 
-Die Sicherung enthält Zugangsdaten und Betriebsdaten und gehört ausschließlich auf das private NAS. `.env`, Datenbanken und Backups sind von Git ausgeschlossen. Optionale Web-Anmeldung: `WEB_USERNAME` und `WEB_PASSWORD` gemeinsam setzen.
+Die Sicherung enthält Zugangsdaten und Betriebsdaten und gehört ausschließlich auf das private NAS. `.env`, Datenbanken und Backups sind von Git ausgeschlossen. Optionale Web-Anmeldung: `WEB_USERNAME` und `WEB_PASSWORD` gemeinsam setzen. Der Sitzungsschlüssel wird in SQLite gespeichert und übersteht Container-Updates. Bei einer abgelaufenen oder ungültigen Formularsitzung wird nichts gebucht; die Fehlerseite führt zurück zur Oberfläche.
 
 ## Tests
 

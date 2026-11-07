@@ -34,7 +34,7 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 # Metadaten & Konfiguration
 # ---------------------------------------------------------------------------
 
-APP_VERSION = "v2.2.1"
+APP_VERSION = "v2.4.0"
 APP_BUILD_TIME = "07.11.2026"
 
 PRINTER_IP = os.getenv("BAMBU_HOST", "").strip()
@@ -51,6 +51,7 @@ MAPPING_FILE = Path(os.getenv("MAPPING_FILE", "/app/data/mapping.json"))
 MAX_3MF_BYTES = int(os.getenv("MAX_3MF_BYTES", str(200 * 1024 * 1024)))
 MAX_XML_BYTES = int(os.getenv("MAX_XML_BYTES", str(2 * 1024 * 1024)))
 DRY_RUN = os.getenv("DRY_RUN", "true").strip().lower() in {"1", "true", "yes", "on"}
+AUTO_MATCH_FILAMENTS = os.getenv('AUTO_MATCH_FILAMENTS', 'true').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 if not PRINTER_IP or not ACCESS_CODE or not SERIAL:
     raise RuntimeError("BAMBU_HOST, BAMBU_ACCESS_CODE und BAMBU_SERIAL müssen gesetzt sein.")
@@ -128,6 +129,9 @@ class Store:
                     slot_mapping_json TEXT,
                     plate_index INTEGER,
                     dry_run INTEGER,
+                    filaments_json TEXT,
+                    ams_snapshot_json TEXT,
+                    mapping_source TEXT NOT NULL DEFAULT '',
                     error TEXT NOT NULL DEFAULT ''
                 );
 
@@ -155,7 +159,12 @@ class Store:
                 """
             )
             columns = {row['name'] for row in con.execute('PRAGMA table_info(jobs)')}
-            for name, kind in [('slot_mapping_json', 'TEXT'), ('plate_index', 'INTEGER'), ('dry_run', 'INTEGER')]:
+            for name, kind in [('slot_mapping_json', 'TEXT'), ('plate_index', 'INTEGER'), ('dry_run', 'INTEGER'),
+                               ('filaments_json', 'TEXT'), ('ams_snapshot_json', 'TEXT'),
+                               ('mapping_source', "TEXT NOT NULL DEFAULT ''"),
+                               ('progress', 'REAL NOT NULL DEFAULT 0'), ('observed_slots_json', "TEXT NOT NULL DEFAULT '[]'"),
+                               ('spools_snapshot_json', 'TEXT'), ('cancelled', 'INTEGER NOT NULL DEFAULT 0'),
+                               ('estimated', 'INTEGER NOT NULL DEFAULT 0'), ('estimate_reason', "TEXT NOT NULL DEFAULT ''")]:
                 if name not in columns:
                     con.execute(f'ALTER TABLE jobs ADD COLUMN {name} {kind}')
             con.execute("UPDATE jobs SET dry_run=1 WHERE dry_run IS NULL AND "
@@ -184,8 +193,9 @@ class Store:
             new_file = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1]
 
             if job and old_file and new_file and old_file != new_file and job["state"] in ("RUNNING", "PREPARING"):
-                con.execute("UPDATE jobs SET state='INTERRUPTED', error=?, updated_at=? WHERE id=?",
+                con.execute("UPDATE jobs SET state='CANCEL_PENDING', cancelled=1, estimated=1, error=?, updated_at=? WHERE id=?",
                             ("Neuer Dateiname vor FINISH erkannt.", now, job_id))
+                enqueue_job(str(job_id))
                 con.execute("UPDATE runtime SET value=NULL WHERE key='active_job_id'")
                 job = None
 
@@ -198,8 +208,9 @@ class Store:
                      json.dumps(ams_mapping) if ams_mapping is not None else None,
                      json.dumps(ams_mapping2) if ams_mapping2 is not None else None),
                 )
-                con.execute('UPDATE jobs SET slot_mapping_json=?, dry_run=? WHERE id=?',
-                            (json.dumps(load_mapping()), int(DRY_RUN), job_id))
+                con.execute('UPDATE jobs SET slot_mapping_json=?, dry_run=?, ams_snapshot_json=?, mapping_source=? WHERE id=?',
+                            (json.dumps(load_mapping()), int(DRY_RUN), json.dumps(ams_state),
+                             'MQTT' if ams_mapping is not None or ams_mapping2 is not None else '', job_id))
                 con.execute("UPDATE runtime SET value=? WHERE key='active_job_id'", (job_id,))
                 log(f"Neuer Druckauftrag: {filename or subtask_name or job_id}")
             else:
@@ -207,8 +218,11 @@ class Store:
                 values: list[Any] = [now]
                 if filename: updates.append("filename=?"); values.append(filename)
                 if subtask_name: updates.append("subtask_name=?"); values.append(subtask_name)
-                if ams_mapping is not None: updates.append("ams_mapping_json=?"); values.append(json.dumps(ams_mapping))
-                if ams_mapping2 is not None: updates.append("ams_mapping2_json=?"); values.append(json.dumps(ams_mapping2))
+                if job['mapping_source'] != 'USER':
+                    if ams_mapping is not None: updates.append("ams_mapping_json=?"); values.append(json.dumps(ams_mapping))
+                    if ams_mapping2 is not None: updates.append("ams_mapping2_json=?"); values.append(json.dumps(ams_mapping2))
+                    if ams_mapping is not None or ams_mapping2 is not None:
+                        updates.append("mapping_source='MQTT'")
                 values.append(job_id)
                 con.execute(f"UPDATE jobs SET {', '.join(updates)} WHERE id=?", values)
             con.commit()
@@ -225,10 +239,13 @@ class Store:
                 return None
             fields = ["state='FINISH_PENDING'", "updated_at=?"]
             values: list[Any] = [now]
+            allow_mapping = con.execute('SELECT mapping_source FROM jobs WHERE id=?', (job_id,)).fetchone()['mapping_source'] != 'USER'
             if filename: fields.append("filename=?"); values.append(filename)
             if subtask_name: fields.append("subtask_name=?"); values.append(subtask_name)
-            if ams_mapping is not None: fields.append("ams_mapping_json=?"); values.append(json.dumps(ams_mapping))
-            if ams_mapping2 is not None: fields.append("ams_mapping2_json=?"); values.append(json.dumps(ams_mapping2))
+            if allow_mapping:
+                if ams_mapping is not None: fields.append("ams_mapping_json=?"); values.append(json.dumps(ams_mapping))
+                if ams_mapping2 is not None: fields.append("ams_mapping2_json=?"); values.append(json.dumps(ams_mapping2))
+                if ams_mapping is not None or ams_mapping2 is not None: fields.append("mapping_source='MQTT'")
             values.append(job_id)
             con.execute(f"UPDATE jobs SET {', '.join(fields)} WHERE id=?", values)
             con.execute("UPDATE runtime SET value=NULL WHERE key='active_job_id'")
@@ -245,7 +262,8 @@ class Store:
             if not job_id:
                 con.commit()
                 return None
-            con.execute("UPDATE jobs SET state=?, error=?, updated_at=? WHERE id=?", (final_state, detail, now, job_id))
+            con.execute("UPDATE jobs SET state=?, error=?, cancelled=?, updated_at=? WHERE id=?",
+                        (final_state, detail, int(final_state == 'CANCEL_PENDING'), now, job_id))
             con.execute("UPDATE runtime SET value=NULL WHERE key='active_job_id'")
             con.commit()
         return str(job_id)
@@ -259,6 +277,24 @@ class Store:
         with self.connection() as con:
             row = con.execute("SELECT value FROM runtime WHERE key='active_job_id'").fetchone()
             return row['value'] if row else None
+
+    def session_secret(self) -> str:
+        with self.connection() as con:
+            con.execute('BEGIN IMMEDIATE')
+            con.execute('INSERT OR IGNORE INTO runtime(key,value) VALUES (?,?)',
+                        ('flask_secret_key', secrets.token_hex(32)))
+            return con.execute('SELECT value FROM runtime WHERE key=?', ('flask_secret_key',)).fetchone()['value']
+
+    def replace_unattempted_plan(self, job_id: str, rows: list[dict]) -> bool:
+        with self.connection() as con:
+            con.execute('BEGIN IMMEDIATE')
+            if con.execute("SELECT 1 FROM deductions WHERE job_id=? AND (attempts>0 OR status NOT IN ('PENDING','UNMAPPED'))", (job_id,)).fetchone():
+                return False
+            con.execute('DELETE FROM deductions WHERE job_id=?', (job_id,))
+            for row in rows:
+                con.execute('INSERT INTO deductions(job_id,source_key,filament_id,tray_id,spool_id,grams,status,detail,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                            (job_id, row['source_key'], row['filament_id'], row['tray_id'], row['spool_id'], row['grams'], row['status'], row.get('detail',''), self.now(), self.now()))
+            return True
 
     def update_job(self, job_id: str, **fields: Any) -> None:
         if not fields: return
@@ -313,9 +349,10 @@ class Store:
             job = con.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
             if not job or job['kind'] != 'PRINT' or job['state'] not in ('RUNNING', 'FINISH_PENDING', 'WAITING_METADATA', 'WAITING_MAPPING'):
                 return False
-            if con.execute("SELECT 1 FROM deductions WHERE job_id=? AND status NOT IN ('UNMAPPED')", (job_id,)).fetchone():
+            if con.execute("SELECT 1 FROM deductions WHERE job_id=? AND (status NOT IN ('UNMAPPED','PENDING') OR attempts>0)", (job_id,)).fetchone():
                 return False
-            con.execute('UPDATE jobs SET ams_mapping_json=?, ams_mapping2_json=NULL, updated_at=? WHERE id=?',
+            con.execute('DELETE FROM deductions WHERE job_id=?', (job_id,))
+            con.execute("UPDATE jobs SET ams_mapping_json=?, ams_mapping2_json=NULL, mapping_source='USER', updated_at=? WHERE id=?",
                         (json.dumps(mapping), self.now(), job_id))
             return True
 
@@ -342,7 +379,7 @@ class Store:
     def list_deductions(self, limit: int = 30) -> list[dict[str, Any]]:
         with self.connection() as con:
             return [dict(r) for r in con.execute(
-                "SELECT d.*, j.filename, j.subtask_name, j.created_at AS job_created_at "
+                "SELECT d.*, j.filename, j.subtask_name, j.created_at AS job_created_at, j.mapping_source, j.estimated "
                 "FROM deductions d JOIN jobs j ON j.id=d.job_id ORDER BY d.id DESC LIMIT ?", (limit,)
             ).fetchall()]
 
@@ -350,7 +387,8 @@ class Store:
         with self.connection() as con:
             return [str(r["id"]) for r in con.execute(
                 "SELECT id FROM jobs WHERE state IN "
-                "('FINISH_PENDING','WAITING_METADATA','WAITING_MAPPING','MANUAL_PENDING','BOOKING','RETRY') "
+                "('FINISH_PENDING','CANCEL_PENDING','WAITING_METADATA','WAITING_MAPPING','MANUAL_PENDING','BOOKING','RETRY') "
+                "OR (state='RUNNING' AND (weights_json IS NULL OR spools_snapshot_json IS NULL)) "
                 "OR EXISTS (SELECT 1 FROM deductions d WHERE d.job_id=jobs.id AND d.status IN ('PENDING','RETRY','UNMAPPED')) "
                 "AND jobs.state NOT IN ('DRY_RUN','FAILED','INTERRUPTED') ORDER BY created_at").fetchall()]
 
@@ -408,7 +446,8 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
             conn = self.context.wrap_socket(conn, server_hostname=self.host, session=self.sock.session)
         return conn, size
 
-def parse_slice_info_config(xml_content: bytes, plate_index: int | None = None) -> dict[int, float]:
+def parse_slice_info_config(xml_content: bytes, plate_index: int | None = None,
+                            filament_metadata: dict | None = None) -> dict[int, float]:
     if len(xml_content) > MAX_XML_BYTES:
         raise ValueError('slice_info.config überschreitet MAX_XML_BYTES')
     root = ET.fromstring(xml_content)
@@ -431,9 +470,12 @@ def parse_slice_info_config(xml_content: bytes, plate_index: int | None = None) 
         except (TypeError, ValueError): continue
         if f_id < 1 or not math.isfinite(grams) or grams <= 0: continue
         weights[f_id] = round(weights.get(f_id, 0.0) + grams, 2)
+        if filament_metadata is not None:
+            filament_metadata[str(f_id)] = {'color': filament.get('color', ''), 'material': filament.get('type', '')}
     return {k: v for k, v in weights.items() if v > 0}
 
-def extract_weights_via_ftps(filename: str, plate_index: int | None = None) -> dict[int, float]:
+def extract_weights_via_ftps(filename: str, plate_index: int | None = None,
+                             filament_metadata: dict | None = None) -> dict[int, float]:
     if not filename: return {}
     name = filename.strip().replace("\\", "/").split("?")[0].rstrip("/").split("/")[-1]
     if '\r' in name or '\n' in name:
@@ -485,7 +527,7 @@ def extract_weights_via_ftps(filename: str, plate_index: int | None = None) -> d
                 if item.lower().endswith("slice_info.config"):
                     if archive.getinfo(item).file_size > MAX_XML_BYTES:
                         raise ValueError('slice_info.config überschreitet MAX_XML_BYTES')
-                    return parse_slice_info_config(archive.read(item), plate_index)
+                    return parse_slice_info_config(archive.read(item), plate_index, filament_metadata)
     except Exception as exc:
         log(f"XML Parsing Fehler: {exc}", logging.ERROR)
     return {}
@@ -577,6 +619,13 @@ def resolve_tray_for_filament(filament_id: int, raw_mapping, raw_mapping2) -> in
     return None
 
 
+def normalized_color(value) -> str | None:
+    color = str(value or '').strip().lstrip('#').upper()
+    if not re.fullmatch(r'[0-9A-F]{6}(?:[0-9A-F]{2})?', color):
+        return None
+    return color[:6]
+
+
 def settle_job(job_id: str) -> None:
     statuses = {r["status"] for r in store.deductions_for_job(job_id)}
     if "UNKNOWN" in statuses or "IN_FLIGHT" in statuses:
@@ -599,55 +648,175 @@ def settle_job(job_id: str) -> None:
 def book_pending(job_id: str) -> None:
     job = store.get_job(job_id)
     simulate = DRY_RUN or (job.get('dry_run') == 1)
+    source = {'AUTO_COLOR_MATERIAL': 'Farbe und Material automatisch zugeordnet',
+              'USER': 'Zuordnung durch Benutzer bestätigt', 'MQTT': 'Zuordnung vom Drucker'}.get(job.get('mapping_source'), '')
+    if job.get('estimate_reason'):
+        source = (source + '; ' if source else '') + 'SCHÄTZUNG: ' + job['estimate_reason']
     for row in store.get_pending_deductions(job_id):
         if simulate:
-            store.set_deduction_status(row["id"], "DRY_RUN", "Nur simuliert; keine spätere automatische Nachbuchung")
+            detail = 'Nur simuliert; keine spätere automatische Nachbuchung'
+            store.set_deduction_status(row["id"], "DRY_RUN", detail + ('; ' + source if source else ''))
             log(f"[DRY-RUN] {row['grams']}g von Spule #{row['spool_id']}")
         elif store.claim_deduction(row["id"]):
             status, detail = send_spoolman_deduction(row)
-            store.set_deduction_status(row["id"], status, detail)
+            store.set_deduction_status(row["id"], status, detail + ('; ' + source if source else ''))
             log(f"Buchung #{row['id']}: {row['grams']}g, Spule #{row['spool_id']}: {status}")
     settle_job(job_id)
 
 
+def stock_snapshot(spools: list[dict]) -> dict:
+    result = {}
+    for spool in spools:
+        filament = spool.get('filament') or {}
+        weight = spool.get('remaining_weight')
+        try:
+            weight = float(weight)
+            if not math.isfinite(weight): weight = None
+        except (TypeError, ValueError): weight = None
+        result[str(spool['id'])] = {'remaining_weight': weight,
+            'material': filament.get('material', ''), 'color': filament.get('color_hex', '')}
+    return result
+
+
+def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, stock: dict):
+    """Plan in centigrams. Freeze this plan before the first API attempt."""
+    inventory = json.loads(job.get('ams_snapshot_json') or '{}')
+    observed = json.loads(job.get('observed_slots_json') or '[]')
+    raw = json.loads(job.get('ams_mapping_json') or 'null')
+    raw2 = json.loads(job.get('ams_mapping2_json') or 'null')
+    remaining = {key: max(0, round(value['remaining_weight'] * 100))
+                 for key, value in stock.items() if value.get('remaining_weight') is not None}
+    rows, reasons, sources = [], [], set()
+    factor = max(0, min(100, float(job.get('progress') or 0))) / 100 if job.get('cancelled') else 1
+    if job.get('cancelled'):
+        reasons.append(f"Abbruchschätzung: Slicer-Mengen × {factor * 100:g}% Fortschritt")
+
+    for filament_id, original in sorted(weights.items()):
+        total = round(original * factor * 100)
+        if total <= 0: continue
+        filament = filaments.get(str(filament_id), {})
+        primary = resolve_tray_for_filament(filament_id, raw, raw2)
+        candidates = []
+        if primary is not None:
+            sources.add(job.get('mapping_source') or 'MQTT')
+            candidates.append(primary)
+        if AUTO_MATCH_FILAMENTS and job.get('mapping_source') != 'USER':
+            for slot in range(4):
+                tray = inventory.get(str(slot), {})
+                if (tray.get('available') is True and normalized_color(filament.get('color'))
+                        and normalized_color(tray.get('color')) == normalized_color(filament.get('color'))
+                        and str(tray.get('material') or '').strip().upper() == str(filament.get('material') or '').strip().upper()):
+                    if slot not in candidates: candidates.append(slot)
+            if primary is None and candidates: sources.add('AUTO_COLOR_MATERIAL')
+        candidates = [slot for slot in candidates if slots.get('external' if slot == 254 else str(slot))]
+        if not candidates:
+            rows.append(dict(source_key=f'filament:{filament_id}', filament_id=filament_id, tray_id=None,
+                             spool_id=None, grams=total/100, status='UNMAPPED', detail='Filament oder Spoolman-Spule nicht zugeordnet'))
+            continue
+        def spool_for(slot): return str(slots['external' if slot == 254 else str(slot)])
+        def order(slot):
+            sid = spool_for(slot)
+            if primary == slot: return (0, 0, 0)
+            if slot in observed: return (1, observed.index(slot), 0)
+            weight = remaining.get(sid)
+            return (2, 0 if weight and weight > 0 else 1, weight if weight is not None else float('inf'))
+        candidates.sort(key=order)
+        if len(candidates) > 1:
+            if not any(slot in observed for slot in candidates) and not any(spool_for(slot) in remaining for slot in candidates):
+                rows.append(dict(source_key=f'filament:{filament_id}', filament_id=filament_id, tray_id=None,
+                                 spool_id=None, grams=total/100, status='UNMAPPED', detail='Gleiche Farbe/Material; Restgewichte fehlen'))
+                continue
+            reasons.append('Gewichtsbasierte Aufteilung gleicher Farbe und gleichen Materials; beobachtete Slots haben Vorrang')
+        pool, used_spools = [], set()
+        for slot in candidates:
+            sid = spool_for(slot)
+            if sid not in used_spools:
+                pool.append((slot, sid)); used_spools.add(sid)
+        # Off-printer reserves use Spoolman's color/material for the primary stock item.
+        reference = stock.get(pool[0][1], filament)
+        color = normalized_color(reference.get('color'))
+        material = str(reference.get('material') or '').strip().upper()
+        reserves = [(sid, item) for sid, item in stock.items() if sid not in used_spools
+                    and color and normalized_color(item.get('color')) == color
+                    and material and str(item.get('material') or '').strip().upper() == material
+                    and remaining.get(sid, 0) > 0]
+        reserves.sort(key=lambda pair: (remaining[pair[0]], int(pair[0])))
+        pool.extend((None, sid) for sid, _ in reserves)
+        left, parts = total, []
+        for slot, sid in pool:
+            if left <= 0: break
+            capacity = remaining.get(sid)
+            amount = left if capacity is None else min(left, capacity)
+            if amount <= 0: continue
+            parts.append([slot, sid, amount])
+            left -= amount
+            if capacity is not None: remaining[sid] -= amount
+            if slot is None:
+                reasons.append('Rechnerische Aufteilung auf passende Spoolman-Reservespule; physische Verwendung nicht bestätigt')
+        if left > 0:
+            slot, sid = pool[-1]
+            if parts and parts[-1][1] == sid: parts[-1][2] += left
+            else: parts.append([slot, sid, left])
+            remaining[sid] = remaining.get(sid, 0) - left
+            reasons.append('Verbrauch übersteigt gepflegten Restbestand; Differenz auf letzte passende Spule gebucht')
+        if len(parts) > 1:
+            reasons.append('Spulenaufteilung anhand gespeicherter Restgewichte geschätzt')
+        for number, (slot, sid, amount) in enumerate(parts, 1):
+            key = f'filament:{filament_id}' + (f':part:{number}' if number > 1 else '')
+            rows.append(dict(source_key=key, filament_id=filament_id, tray_id=slot,
+                             spool_id=int(sid), grams=amount/100, status='PENDING'))
+    source = 'USER' if job.get('mapping_source') == 'USER' else '+'.join(sorted(sources))
+    return rows, source, '; '.join(dict.fromkeys(reasons))
+
+
 def process_job(job_id: str) -> None:
     job = store.get_job(job_id)
-    if not job or job["state"] in ("RUNNING", "PREPARING", "FAILED", "INTERRUPTED", "DRY_RUN"):
+    if not job or job['state'] in ('PREPARING', 'FAILED', 'INTERRUPTED', 'DRY_RUN', 'CANCELLED_ZERO'):
         return
-    if job["kind"] == "MANUAL":
+    if job['kind'] == 'MANUAL':
         book_pending(job_id)
         return
-
-    weights = {}
-    if job.get("weights_json"):
-        weights = {int(k): float(v) for k, v in json.loads(job["weights_json"]).items()}
-    if not weights:
-        weights = extract_weights_via_ftps(job.get("filename") or job.get("subtask_name", ""), job.get("plate_index"))
-        if not weights:
-            store.update_job(job_id, state="WAITING_METADATA", error="Warte auf eindeutige 3MF-Verbrauchsdaten.")
-            return
-        store.update_job(job_id, weights_json=json.dumps(weights))
-    if any(k < 1 or not math.isfinite(v) or v <= 0 for k, v in weights.items()):
-        store.update_job(job_id, state="REJECTED", error="Ungültige Verbrauchsdaten.")
+    existing = store.deductions_for_job(job_id)
+    # Keep original plans, including v2.x positions, immutable after any booking attempt.
+    if existing and all(row['status'] != 'UNMAPPED' for row in existing):
+        book_pending(job_id)
         return
-
-    raw_mapping = json.loads(job["ams_mapping_json"]) if job.get("ams_mapping_json") else None
-    raw_mapping2 = json.loads(job["ams_mapping2_json"]) if job.get("ams_mapping2_json") else None
-    # Freeze spool assignments for the job so a later spool change cannot redirect retries.
-    if job.get("slot_mapping_json"):
-        slot_mapping = json.loads(job["slot_mapping_json"])
-    else:
-        slot_mapping = load_mapping()
-        store.update_job(job_id, slot_mapping_json=json.dumps(slot_mapping))
-
-    for f_id, grams in sorted(weights.items()):
-        tray_id = resolve_tray_for_filament(f_id, raw_mapping, raw_mapping2)
-        slot_key = "external" if tray_id == 254 else (str(tray_id) if tray_id is not None else None)
-        spool_id = slot_mapping.get(slot_key) if slot_key is not None else None
-        if not spool_id:
-            store.upsert_deduction(job_id, f"filament:{f_id}", f_id, tray_id, None, grams, "UNMAPPED", "AMS-Mapping oder Spulenzuordnung fehlt")
-        else:
-            store.upsert_deduction(job_id, f"filament:{f_id}", f_id, tray_id, int(spool_id), grams, "PENDING")
+    if existing and any(row['attempts'] or row['status'] not in ('UNMAPPED','PENDING') for row in existing):
+        store.update_job(job_id, state='UNKNOWN', error='Teilweise verarbeiteter Altauftrag; keine automatische Neuaufteilung.')
+        return
+    if not job.get('spools_snapshot_json'):
+        spools = fetch_spoolman_spools()
+        if spools:
+            snapshot = json.dumps(stock_snapshot(spools))
+            store.update_job(job_id, spools_snapshot_json=snapshot)
+            job['spools_snapshot_json'] = snapshot
+    weights = {int(k): float(v) for k, v in json.loads(job.get('weights_json') or '{}').items()}
+    filaments = json.loads(job.get('filaments_json') or '{}')
+    if not weights or (AUTO_MATCH_FILAMENTS and not filaments and job.get('mapping_source') != 'USER'):
+        downloaded = extract_weights_via_ftps(job.get('filename') or job.get('subtask_name',''), job.get('plate_index'), filaments)
+        if not weights: weights = downloaded
+        if weights:
+            store.update_job(job_id, weights_json=json.dumps(weights), filaments_json=json.dumps(filaments))
+    # Start workers capture metadata and stock only; they never deduct during printing.
+    if job['state'] == 'RUNNING': return
+    if not weights:
+        store.update_job(job_id, state='WAITING_METADATA', error='Warte auf eindeutige 3MF-Verbrauchsdaten.')
+        return
+    if any(k < 1 or not math.isfinite(v) or v <= 0 for k,v in weights.items()):
+        store.update_job(job_id, state='REJECTED', error='Ungültige Verbrauchsdaten.')
+        return
+    slots = json.loads(job.get('slot_mapping_json') or json.dumps(load_mapping()))
+    if not job.get('slot_mapping_json'): store.update_job(job_id, slot_mapping_json=json.dumps(slots))
+    stock = json.loads(job.get('spools_snapshot_json') or '{}')
+    rows, source, reason = plan_consumption(job, weights, filaments, slots, stock)
+    store.update_job(job_id, mapping_source=source or job.get('mapping_source',''), estimated=int(bool(reason)), estimate_reason=reason)
+    if not rows:
+        store.update_job(job_id, state='CANCELLED_ZERO' if job.get('cancelled') else 'REJECTED', error=reason or 'Keine positive Verbrauchsmenge.')
+        return
+    if not store.replace_unattempted_plan(job_id, rows): return
+    if any(row['status'] == 'UNMAPPED' for row in rows):
+        store.update_job(job_id, state='WAITING_MAPPING', error='Zuordnung oder Restgewichte fehlen; gesamter Auftrag wartet.')
+        return
     book_pending(job_id)
 
 
@@ -664,8 +833,8 @@ def job_worker():
 # MQTT Listener
 # ---------------------------------------------------------------------------
 
-ams_state = {i: {"type": "-", "color": "#888888", "remain": -1} for i in range(4)}
-printer_status = {"state": "OFFLINE", "progress": 0, "subtask_name": "", "active_slot": None, "active_slot_label": "Kein Slot erkannt"}
+ams_state = {i: {"type": "-", "material": "", "color": "#888888", "remain": -1, "available": False, "known": False} for i in range(4)}
+printer_status = {"state": "OFFLINE", "progress": 0, "subtask_name": "", "active_slot": None, "active_slot_label": "Kein Slot erkannt", "layer": 0, "stage": None}
 mqtt_client: mqtt.Client | None = None
 seq_counter = 1
 
@@ -698,12 +867,23 @@ def on_message(client, userdata, msg):
                 for tray in unit.get("tray", []):
                     tid = int(tray.get("id", -1))
                     if tid in range(4):
-                        c = str(tray.get("tray_color") or "888888")[:6]
-                        ams_state[tid] = {
-                            "type": tray.get("tray_sub_brands") or tray.get("tray_type") or "Generic",
-                            "color": f"#{c}",
-                            "remain": tray.get("remain", -1),
-                        }
+                        current = ams_state[tid]
+                        if 'tray_type' in tray:
+                            current['known'] = True
+                            current['material'] = str(tray['tray_type'] or '')
+                            current['available'] = bool(current['material'])
+                            current['type'] = tray.get('tray_sub_brands') or current['material'] or '-'
+                        if 'tray_color' in tray:
+                            current['color'] = '#' + (normalized_color(tray['tray_color']) or '888888')
+                        if 'remain' in tray: current['remain'] = tray['remain']
+                        if set(tray) == {'id'}:
+                            current.update(available=False, known=True)
+            if 'tray_exist_bits' in ams_data:
+                try:
+                    bits = int(str(ams_data['tray_exist_bits']), 16)
+                    for tid in range(4):
+                        if not bits & (1 << tid): ams_state[tid].update(available=False, known=True)
+                except ValueError: pass
 
         ams_map = p.get("ams_mapping") or (ams_data.get("ams_mapping") if isinstance(ams_data, dict) else None)
         ams_map2 = p.get("ams_mapping2") or (ams_data.get("ams_mapping2") if isinstance(ams_data, dict) else None)
@@ -729,19 +909,42 @@ def on_message(client, userdata, msg):
         if state:
             printer_status["state"] = state
         if 'mc_percent' in p:
-            printer_status["progress"] = int(float(p['mc_percent'] or 0))
+            printer_status["progress"] = max(0, min(100, int(float(p['mc_percent'] or 0))))
+        if 'layer_num' in p: printer_status['layer'] = int(p['layer_num'] or 0)
+        if 'stg_cur' in p: printer_status['stage'] = int(p['stg_cur'])
         if subtask: printer_status["subtask_name"] = subtask
 
         if state in ("RUNNING", "PREPARE"):
-            store.create_or_update_running_job(filename, subtask, ams_map, ams_map2)
+            previous = store.active_job_id()
+            started = store.create_or_update_running_job(filename, subtask, ams_map, ams_map2)
+            if started != previous:
+                if 'mc_percent' not in p: printer_status['progress'] = 0
+                if 'layer_num' not in p: printer_status['layer'] = 0
+                if 'stg_cur' not in p: printer_status['stage'] = None
+                enqueue_job(started)
         # Mapping and file metadata can arrive in MQTT delta messages without a state.
         active_id = store.active_job_id()
         if active_id:
             fields = {}
+            job = store.get_job(active_id)
+            fields['progress'] = max(float(job.get('progress') or 0), printer_status['progress'])
+            observed = json.loads(job.get('observed_slots_json') or '[]')
+            slot = printer_status['active_slot']
+            if (printer_status['layer'] > 0 and printer_status['stage'] == 0
+                    and slot is not None and slot not in observed):
+                observed.append(slot)
+            fields['observed_slots_json'] = json.dumps(observed)
+            snapshot = json.loads(job.get('ams_snapshot_json') or '{}')
+            for tid, tray in ams_state.items():
+                if not snapshot.get(str(tid), {}).get('known') and tray.get('known'):
+                    snapshot[str(tid)] = dict(tray)
+            fields['ams_snapshot_json'] = json.dumps(snapshot)
             if filename: fields['filename'] = filename
             if subtask: fields['subtask_name'] = subtask
-            if ams_map is not None: fields['ams_mapping_json'] = json.dumps(ams_map)
-            if ams_map2 is not None: fields['ams_mapping2_json'] = json.dumps(ams_map2)
+            if job['mapping_source'] != 'USER':
+                if ams_map is not None: fields['ams_mapping_json'] = json.dumps(ams_map)
+                if ams_map2 is not None: fields['ams_mapping2_json'] = json.dumps(ams_map2)
+                if ams_map is not None or ams_map2 is not None: fields['mapping_source'] = 'MQTT'
             plate = re.search(r'plate_(\d+)\.gcode', str(p.get('param', '')))
             if plate: fields['plate_index'] = int(plate.group(1))
             if fields: store.update_job(active_id, **fields)
@@ -749,9 +952,11 @@ def on_message(client, userdata, msg):
             j_id = store.finish_active_job(filename, subtask, ams_map, ams_map2)
             if j_id: enqueue_job(j_id)
         elif state in ("FAILED", "CANCEL", "CANCELLED", "CANCELED", "STOPPED", "ERROR"):
-            store.close_active_job("FAILED", f"Status: {state}")
+            j_id = store.close_active_job('CANCEL_PENDING', f'Status: {state}')
+            if j_id: enqueue_job(j_id)
         elif state == "IDLE":
-            store.close_active_job("INTERRUPTED", "Unerwartet IDLE vor FINISH")
+            j_id = store.close_active_job('CANCEL_PENDING', 'Unerwartet IDLE vor FINISH')
+            if j_id: enqueue_job(j_id)
     except Exception as exc:
         logger.exception("MQTT Fehler")
 
@@ -760,14 +965,14 @@ def on_message(client, userdata, msg):
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or store.session_secret()
 
 def job_mapping_forms():
     forms = []
     for job in store.list_jobs():
         if job['kind'] != 'PRINT' or job['state'] not in ('RUNNING', 'FINISH_PENDING', 'WAITING_METADATA', 'WAITING_MAPPING'):
             continue
-        if any(row['status'] != 'UNMAPPED' for row in store.deductions_for_job(job['id'])):
+        if any(row['status'] not in ('UNMAPPED', 'PENDING') or row['attempts'] > 0 for row in store.deductions_for_job(job['id'])):
             continue
         weights = json.loads(job['weights_json'] or '{}')
         mapping = json.loads(job['ams_mapping_json'] or '[]')
@@ -789,7 +994,10 @@ def protect_requests():
     if request.method == 'POST':
         expected = session.get('csrf_token')
         if not expected or not secrets.compare_digest(request.form.get('csrf_token', ''), expected):
-            return Response('Ungültiges Formular. Seite neu laden.', 403)
+            return Response('<!doctype html><html lang="de"><meta charset="utf-8"><title>Sitzung abgelaufen</title>'
+                            '<h1>Sitzung abgelaufen</h1><p>Diese Anfrage wurde nicht gebucht. '
+                            'Bitte öffne die Oberfläche neu und wiederhole die Eingabe.</p>'
+                            '<p><a href="/">Zur Bridge-Oberfläche</a></p></html>', 403, mimetype='text/html')
 
 HTML_TEMPLATE = r"""<!doctype html>
 <html lang="de">
@@ -820,10 +1028,10 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
   <div class="top">
     <div>
       <h1>Bambu Lab → Spoolman Bridge <span style="font-size:14px;color:#aab2bf;font-weight:normal;">{{ version }} (Stand: {{ build_time }})</span></h1>
-      <div class="muted">A1 / A1 mini · AMS Lite · FINISH-only Verbuchung</div>
+  <div class="muted">A1 / A1 mini · AMS Lite · Automatische Verbrauchsbuchung</div>
     </div>
     <div>
-      <button class="secondary" onclick="refreshStatus()">Aktualisieren</button>
+      <button class="secondary" onclick="window.location.reload()">Aktualisieren</button>
       <a href="{{ spoolman_url }}" target="_blank" rel="noopener" style="margin-left:8px;">Spoolman öffnen ↗</a>
     </div>
   </div>
@@ -837,6 +1045,8 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
 
 <section class="card">
   <h2>AMS Lite Zuordnung</h2>
+    <p class="muted">Automatische Filamentzuordnung: {{ 'aktiv, über gleiche Farbe und Material; bei gleichen Spulen nach beobachtetem Slot und Restgewicht' if auto_match else 'deaktiviert' }}.
+    Beim Spulenwechsel zwischen Drucken die Spoolman-Zuordnung aktualisieren. Für automatische Zuordnung müssen die Slicer-Farben den tatsächlich ausgewählten AMS-Farben entsprechen.</p>
   <form method="post" action="/save">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for slot_id in range(4) %}
@@ -899,6 +1109,7 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
   <form method="post" action="{{ url_for('set_job_mapping', job_id=job.id) }}" style="margin-bottom:18px">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <strong>{{ job.subtask_name or job.filename or job.id[:8] }}</strong> · {{ job.state }}
+    {% if job.mapping_source %}<span class="muted"> · Zuordnung: {{ job.mapping_source }}</span>{% endif %}
     {% if job.error %}<p class="muted">{{ job.error }}</p>{% endif %}
     {% for filament in job.filaments %}
     <div class="slot">
@@ -928,7 +1139,7 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
             <td>{{ 'Extern' if d.tray_id == 254 else (('Slot ' ~ (d.tray_id + 1)) if d.tray_id is not none else '—') }}</td>
             <td>{{ ('#' ~ d.spool_id) if d.spool_id else '—' }}</td>
             <td>{{ '%.2f'|format(d.grams) }} g</td>
-            <td><strong>{{ d.status }}</strong></td>
+            <td><strong>{{ d.status }}{% if d.estimated %} · SCHÄTZUNG{% endif %}</strong></td>
             <td class="muted small">{{ d.detail }}</td>
           </tr>
         {% else %}
@@ -965,7 +1176,7 @@ function refreshStatus(){fetch('/api/status').then(r=>r.json()).then(data=>{
    cell(tr,d.tray_id===null?'—':(d.tray_id===254?'Extern':'Slot '+(d.tray_id+1)));
    cell(tr,d.spool_id?'#'+d.spool_id:'—');
    cell(tr,Number(d.grams).toFixed(2)+' g');
-   cell(tr,d.status);
+   cell(tr,d.status+(d.estimated?' · SCHÄTZUNG':''));
    cell(tr,d.detail);
    tbody.appendChild(tr);
  });
@@ -996,6 +1207,7 @@ def index():
         logs=list(log_buffer),
         spoolman_url=SPOOLMAN_BROWSER_URL,
         dry_run=DRY_RUN,
+        auto_match=AUTO_MATCH_FILAMENTS,
     )
 
 @app.route("/api/status")
@@ -1006,6 +1218,7 @@ def status_api():
         "spoolman": spoolman_status,
         "jobs": store.list_jobs(),
         "dry_run": DRY_RUN,
+        "auto_match_filaments": AUTO_MATCH_FILAMENTS,
         "deductions": store.list_deductions(30),
         "logs": logs,
     })

@@ -1,5 +1,24 @@
 # Änderungen
 
+## v2.4.0 — 2026-11-07
+
+- Gleichartige AMS-Spulen werden nach beobachteter Nutzung und kleinstem positivem Restgewicht zugeordnet; rechnerischer Verbrauch kann auf mehrere Spulen verteilt werden.
+- Passende Reservespulen aus Spoolman werden bei Bedarf einbezogen. Übersteigt der Verbrauch auch deren Bestand, wird die Differenz der letzten passenden Spule belastet und gekennzeichnet.
+- Abgebrochene Drucke werden anhand des letzten bekannten Fortschritts geschätzt und automatisch abgerechnet. Schätzungen und ihre Berechnungsbasis sind im Journal sichtbar.
+- Hintergrund-Worker sichert Slicer-Daten und Bestandsgewichte bereits zum Druckstart, ohne während des Druckens zu buchen.
+- Buchungspläne bleiben nach dem ersten API-Versuch unverändert; erfolgreiche Teilbuchungen und historische Dry-Runs werden nicht wiederholt.
+- Regressionstests für 30/70-Aufteilung, Reservespulen, Bestandsmangel, Abbruch, Fortschrittsreset und Wiederholungen ergänzt.
+
+## v2.3.0 — 2026-11-07
+
+- Automatische Slicer→AMS-Zuordnung bei exakt gleicher RGB-Farbe und Materialtyp ergänzt, wenn kein ausdrücklich bestätigtes oder vom Drucker geliefertes Mapping vorliegt.
+- AMS-Bestand zum Druckstart und Filament-Metadaten pro Auftrag gespeichert; partielle MQTT-Meldungen überschreiben bekannte Attribute nicht mehr.
+- Mehrdeutige oder unvollständige Aufträge warten vollständig auf Bestätigung, ohne vorab Teilpositionen zu buchen.
+- Herkunft der Zuordnung im Journal dokumentiert; externe Spulen bleiben explizit zuzuordnen.
+- Sitzungsschlüssel dauerhaft in SQLite gespeichert, damit Formulare Container-Updates überstehen. Ungültige Formulare zeigen eine verständliche Fehlerseite und buchen nichts.
+- Aktualisieren lädt auch die auftragsbezogenen Zuordnungsformulare neu.
+- Regressionstests für automatische Zuordnung, Mehrdeutigkeit, Inventar-Snapshots und Formularsitzungen ergänzt.
+
 ## v2.2.1 — 2026-11-07
 
 - Auftragsbezogene Slicer→AMS-Zuordnung in der Oberfläche ergänzt, falls die Firmware kein Mapping liefert.
