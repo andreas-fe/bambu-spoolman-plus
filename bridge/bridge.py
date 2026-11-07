@@ -34,7 +34,7 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 # Metadaten & Konfiguration
 # ---------------------------------------------------------------------------
 
-APP_VERSION = "v2.4.0"
+APP_VERSION = "v2.4.1"
 APP_BUILD_TIME = "07.11.2026"
 
 PRINTER_IP = os.getenv("BAMBU_HOST", "").strip()
@@ -378,10 +378,14 @@ class Store:
 
     def list_deductions(self, limit: int = 30) -> list[dict[str, Any]]:
         with self.connection() as con:
-            return [dict(r) for r in con.execute(
+            rows = [dict(r) for r in con.execute(
                 "SELECT d.*, j.filename, j.subtask_name, j.created_at AS job_created_at, j.mapping_source, j.estimated "
                 "FROM deductions d JOIN jobs j ON j.id=d.job_id ORDER BY d.id DESC LIMIT ?", (limit,)
             ).fetchall()]
+        for row in rows:
+            if row['status'] == 'DONE':
+                row['detail'] = re.sub(r'^HTTP 2\d\d(?=;|$)', 'Buchung durch Spoolman bestätigt', row['detail'])
+        return rows
 
     def recoverable_jobs(self) -> list[str]:
         with self.connection() as con:
@@ -570,7 +574,7 @@ def send_spoolman_deduction(row: dict[str, Any]) -> tuple[str, str]:
             json={"use_weight": round(float(row["grams"]), 2)},
             timeout=(3, 12),
         )
-        if 200 <= r.status_code < 300: return "DONE", f"HTTP {r.status_code}"
+        if 200 <= r.status_code < 300: return "DONE", "Buchung durch Spoolman bestätigt"
         if r.status_code == 429: return "RETRY", "Rate Limit"
         if 400 <= r.status_code < 500: return "REJECTED", f"HTTP {r.status_code}: {r.text[:200]}"
         return "UNKNOWN", f"HTTP {r.status_code}"

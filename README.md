@@ -2,6 +2,68 @@
 
 Lokale Docker-Bridge für Bambu Lab A1/A1 mini mit AMS Lite und eine **bereits laufende Spoolman-Instanz**. Nach `FINISH` werden die Slicer-Verbrauchswerte aus der gedruckten 3MF-Datei pro Filament der zugeordneten Spoolman-Spule belastet. Bei Abbruch wird eine ausdrücklich gekennzeichnete Schätzung automatisch verbucht.
 
+## Funktionen im Überblick
+
+- **Lokale Druckerkommunikation:** MQTT über TLS liefert Status, Fortschritt und AMS-Daten; FTPS lädt die geslicte 3MF-Datei in den Arbeitsspeicher.
+- **Slicer-basierte Verbräuche:** Grammwerte, Farben und Materialtypen aus `Metadata/slice_info.config`, passend zur gedruckten Platte. Die Bridge berechnet keine exakten Messwerte aus einzelnen G-Code-Bewegungen.
+- **Mehrmaterial und AMS Lite:** Drucker-/Benutzerzuordnung oder automatischer Farb- und Materialvergleich; Slot→Spoolman-Spule wird zum Druckstart gespeichert.
+- **Spulenwechsel und Reserven:** Gewichtsbasierte Aufteilung auf passende Spulen, beispielsweise 30 g + 70 g; unbestätigte physische Spulenwechsel werden als Schätzung gekennzeichnet.
+- **Abbruchbehandlung:** Automatische, gekennzeichnete Schätzung anhand des zuletzt bekannten Fortschritts.
+- **Weboberfläche:** Slot-Zuordnung, manuelle Abbuchung, auftragsbezogene Bestätigung, Live-Status, Logs und Buchungsjournal.
+- **Dauerhafter Betrieb:** SQLite-Journal, eingefrorene Buchungspläne, sichere Wiederaufnahme, Dry-Run, persistente Formularsitzungen und optionale Web-Anmeldung.
+- **Docker auf QNAP:** Eigenständige Bridge für einen bestehenden Spoolman, Healthcheck, Log-Rotation, SSH-Deployment mit Backup und Rückfallmöglichkeit.
+
+## Aktuelle Oberfläche
+
+![Bambu-Spoolman Bridge v2.4.1 – aktuelle GUI mit anonymisierten Beispieldaten](docs/assets/gui-v2.4.1.jpg)
+
+*Screenshot der GUI v2.4.1 mit anonymisierten Beispieldaten. Die dargestellten Buchungen und Logs sind Demonstrationsdaten.*
+
+## Kommunikation und Verarbeitung
+
+```mermaid
+flowchart LR
+    Printer["Bambu A1 / A1 mini<br/>AMS Lite"]
+    Slicer["Bambu Studio / OrcaSlicer<br/>G-Code in 3MF + Slicer-Metadaten"]
+    Bridge["Bridge im Docker-Container<br/>Tracker + Worker + Weboberfläche"]
+    Ledger[("Persistentes SQLite-Journal<br/>Aufträge + Buchungspositionen")]
+    Spoolman["Bestehender Spoolman<br/>Spulenbestand + REST API"]
+    Browser["Browser<br/>Zuordnung + Journal + manuelle Buchung"]
+    Slicer -->|"Druckdatei und Startauswahl"| Printer
+    Printer -->|"MQTT TLS :8883<br/>Status, Fortschritt, AMS-Slots"| Bridge
+    Bridge -->|"MQTT: Statusanforderung pushall"| Printer
+    Printer -->|"FTPS :990 + passive Ports<br/>geslicte 3MF-Datei"| Bridge
+    Bridge <-->|"GET Spulen / PUT Verbrauch<br/>HTTP REST API"| Spoolman
+    Bridge <--> Ledger
+    Browser <-->|"HTTP :7913"| Bridge
+```
+
+```mermaid
+flowchart TD
+    Start["MQTT: Druckstart erkannt"] --> Snapshot["Slot-Zuordnung und AMS-Bestand speichern<br/>Worker lädt Slicer-Daten und Spoolman-Restgewichte"]
+    Snapshot --> Track["Fortschritt und verwendete Slots verfolgen<br/>während des Druckens nichts abbuchen"]
+    Track --> End{"Druckende"}
+    End -->|"FINISH"| Full["Slicer-Grammwerte der gedruckten Platte"]
+    End -->|"Abbruch / Fehler / unerwartet IDLE"| Estimate["Slicer-Grammwerte × letzter Fortschritt<br/>als Schätzung kennzeichnen"]
+    Full --> Map{"Zuordnung vollständig?"}
+    Estimate --> Map
+    Map -->|"Nein"| Wait["Auftrag offenhalten<br/>Metadaten erneut laden oder Zuordnung bestätigen"]
+    Wait --> Map
+    Map -->|"Ja"| Allocate["Beobachtete Slots bevorzugen<br/>gleiche Spulen nach kleinstem positivem Restgewicht<br/>bei Bedarf passende Spoolman-Reserven einbeziehen"]
+    Allocate --> Plan["Buchungsplan pro Spule speichern<br/>Aufteilungen und Bestandsdefizite kennzeichnen"]
+    Plan --> Mode{"Dry-Run?"}
+    Mode -->|"Ja"| Sim["Nur simulieren<br/>historisch nicht nachbuchen"]
+    Mode -->|"Nein"| Book["Spoolman: PUT Verbrauch in Gramm"]
+    Book --> Result{"Ergebnis"}
+    Result -->|"Bestätigt"| Done["Buchung durch Spoolman bestätigt"]
+    Result -->|"Sicher noch nicht gebucht"| Retry["Plan unverändert später erneut versuchen"]
+    Retry --> Book
+    Result -->|"Antwort unklar"| Unknown["UNKNOWN: keine automatische Wiederholung<br/>Bestand prüfen"]
+    Result -->|"Abgelehnt"| Rejected["REJECTED: Fehler im Journal anzeigen"]
+```
+
+Das [detaillierte Kommunikations- und Verarbeitungskonzept](docs/architecture.md) erklärt Protokolle, Datenquellen, Zustände, Spulenaufteilung und die Grenzen der Schätzungen. Änderungen stehen im [Changelog](CHANGELOG.md), der freigegebene Betriebsstand in [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Einrichtung
 
 Voraussetzungen: Docker Compose v2, erreichbarer Drucker mit LAN-Zugangscode (MQTT TLS 8883, implizites FTPS 990 sowie passive Datenports), vorhandene Spulen in Spoolman. Die Compose-Datei benötigt den Namen eines bereits bestehenden Docker-Netzwerks, an dem Spoolman angeschlossen ist (`SPOOLMAN_NETWORK`). Diesen Namen zeigt `docker inspect spoolman --format '{{json .NetworkSettings.Networks}}'`.

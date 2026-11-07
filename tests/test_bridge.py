@@ -546,3 +546,17 @@ def test_retry_does_not_replan_split_or_duplicate_successful_part(bridge, monkey
     assert send.call_count == 3
     assert [(c.args[0]['spool_id'],c.args[0]['grams']) for c in send.call_args_list] == [(10,30),(20,70),(20,70)]
     assert b.store.get_job(job)['state'] == 'DONE'
+
+
+def test_successful_api_confirmation_is_readable(bridge, monkeypatch):
+    monkeypatch.setattr(bridge.requests,'get',Mock(return_value=Mock(status_code=200)))
+    monkeypatch.setattr(bridge.requests,'put',Mock(return_value=Mock(status_code=200)))
+    assert bridge.send_spoolman_deduction({'spool_id':1,'grams':0.21}) == ('DONE','Buchung durch Spoolman bestätigt')
+
+
+def test_historical_confirmation_is_readable_without_changing_audit_data(bridge):
+    job=bridge.store.create_manual_job(1,0,0.21)
+    row=bridge.store.deductions_for_job(job)[0]
+    bridge.store.set_deduction_status(row['id'],'DONE','HTTP 200; Zuordnung vom Drucker')
+    assert bridge.store.list_deductions()[0]['detail']=='Buchung durch Spoolman bestätigt; Zuordnung vom Drucker'
+    assert bridge.store.deductions_for_job(job)[0]['detail']=='HTTP 200; Zuordnung vom Drucker'
