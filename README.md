@@ -15,9 +15,9 @@ Lokale Docker-Bridge für Bambu Lab A1/A1 mini mit AMS Lite und eine **bereits l
 
 ## Aktuelle Oberfläche
 
-![Bambu-Spoolman Bridge v2.4.1 – aktuelle GUI mit anonymisierten Beispieldaten](docs/assets/gui-v2.4.1.jpg)
+![Bambu-Spoolman Bridge v2.4.3 – aktuelle GUI mit anonymisierten Beispieldaten](docs/assets/gui-v2.4.3.jpg)
 
-*Screenshot der GUI v2.4.1 mit anonymisierten Beispieldaten. Die dargestellten Buchungen und Logs sind Demonstrationsdaten.*
+*Screenshot der GUI v2.4.3 mit anonymisierten Beispieldaten. Die dargestellten Buchungen und Logs sind Demonstrationsdaten.*
 
 ## Kommunikation und Verarbeitung
 
@@ -106,6 +106,8 @@ Historische Simulationen werden **nicht** nachgebucht. Manuelle Buchungen unterl
 Die Oberfläche zeigt den Verbindungsstatus. Die Buchung verwendet Spoolmans `PUT /api/v1/spool/{id}/use` mit `use_weight` in Gramm. API-Referenz: [Spoolman](https://github.com/Donkie/Spoolman/blob/master/spoolman/api/v1/spool.py).
 
 ## AMS- und Druckdaten
+
+Für den täglichen Einsatz: [Schritt-für-Schritt-Anleitung für AMS, Slicer-Projekt und Spoolman](docs/filament-workflow.md). Sie erklärt auch, warum eine Profil-Standardfarbe allein nicht genügt und warum Spoolman seine reale Filamentfarbe behalten darf.
 
 Slicer-Filament-IDs und `T0`/`T1` im G-Code sind keine verbindlichen physischen AMS-Slots: Die Auswahl beim Druckstart kann sie auf andere Slots abbilden.
 

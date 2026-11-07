@@ -1,5 +1,11 @@
 # Änderungen
 
+## v2.4.3 — 2026-11-07
+
+- Alltagstauglichen Ablauf für AMS-Farben, aktuelle Slicer-Projektfarben und Spoolman-Bestandsdaten dokumentiert, einschließlich Synchronisierung, Filamentprofilen und importierten Projekten.
+- Tatsächlich empfangenen AMS-Materialtyp und RGB-Farbcode direkt unter jedem Slot angezeigt, damit der Slicer-Abgleich ohne Farbraten möglich ist.
+- Keine dauerhaften Farbfreigaben angelegt und keine Farben oder Materialdaten automatisch verändert.
+
 ## v2.4.2 — 2026-11-07
 
 - Nicht zugeordnete Filamente nennen jetzt die konkrete Slicer-Farbe und das Material beziehungsweise eine fehlende Spoolman-Zuweisung oder fehlende AMS-Daten.

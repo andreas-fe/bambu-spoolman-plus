@@ -34,7 +34,7 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 # Metadaten & Konfiguration
 # ---------------------------------------------------------------------------
 
-APP_VERSION = "v2.4.2"
+APP_VERSION = "v2.4.3"
 APP_BUILD_TIME = "07.11.2026"
 
 PRINTER_IP = os.getenv("BAMBU_HOST", "").strip()
@@ -1085,6 +1085,7 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
           <span class="swatch" style="background:{{ ams[slot_id].color }}"></span>
           <strong>AMS Slot {{ slot_id + 1 }}</strong>
           <div class="muted small">{{ ams[slot_id].type }} · Rest: {{ ams[slot_id].remain }}%</div>
+          <div class="muted small">Material/Farbcode: {% if ams[slot_id].known and ams[slot_id].available %}{{ ams[slot_id].material }} / <code>{{ ams[slot_id].color }}</code>{% else %}—{% endif %}</div>
         </div>
         <select name="slot_{{ slot_id }}">
           <option value="">— Keine Spoolman-Spule —</option>
