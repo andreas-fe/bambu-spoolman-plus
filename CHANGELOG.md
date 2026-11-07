@@ -1,5 +1,12 @@
 # Änderungen
 
+## v2.2.1 — 2026-11-07
+
+- Auftragsbezogene Slicer→AMS-Zuordnung in der Oberfläche ergänzt, falls die Firmware kein Mapping liefert.
+- Bereits simulierte, gebuchte oder gerade verarbeitete Positionen können nicht umgeleitet werden.
+- Bestätigte Zuordnungen werden nicht auf nachfolgende Drucke übertragen.
+- Weitere Regressionstests für die Zuordnungsformulare und parallele Verarbeitung ergänzt.
+
 ## v2.2.0 — 2026-11-07
 
 - Aktuellen v2.1-Stand mit SQLite-Journal und Mehrmaterialunterstützung in das Repository übernommen.

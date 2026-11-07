@@ -34,7 +34,7 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 # Metadaten & Konfiguration
 # ---------------------------------------------------------------------------
 
-APP_VERSION = "v2.2.0"
+APP_VERSION = "v2.2.1"
 APP_BUILD_TIME = "07.11.2026"
 
 PRINTER_IP = os.getenv("BAMBU_HOST", "").strip()
@@ -305,6 +305,19 @@ class Store:
     def deductions_for_job(self, job_id: str) -> list[dict[str, Any]]:
         with self.connection() as con:
             return [dict(row) for row in con.execute('SELECT * FROM deductions WHERE job_id=?', (job_id,))]
+
+    def set_job_mapping(self, job_id: str, mapping: list[int]) -> bool:
+        """A user-confirmed mapping applies to one job, never to subsequent prints."""
+        with self.connection() as con:
+            con.execute('BEGIN IMMEDIATE')
+            job = con.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+            if not job or job['kind'] != 'PRINT' or job['state'] not in ('RUNNING', 'FINISH_PENDING', 'WAITING_METADATA', 'WAITING_MAPPING'):
+                return False
+            if con.execute("SELECT 1 FROM deductions WHERE job_id=? AND status NOT IN ('UNMAPPED')", (job_id,)).fetchone():
+                return False
+            con.execute('UPDATE jobs SET ams_mapping_json=?, ams_mapping2_json=NULL, updated_at=? WHERE id=?',
+                        (json.dumps(mapping), self.now(), job_id))
+            return True
 
     def create_manual_job(self, spool_id: int, slot: int | None, grams: float) -> str:
         job_id = str(uuid.uuid4())
@@ -749,6 +762,22 @@ def on_message(client, userdata, msg):
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_hex(32)
 
+def job_mapping_forms():
+    forms = []
+    for job in store.list_jobs():
+        if job['kind'] != 'PRINT' or job['state'] not in ('RUNNING', 'FINISH_PENDING', 'WAITING_METADATA', 'WAITING_MAPPING'):
+            continue
+        if any(row['status'] != 'UNMAPPED' for row in store.deductions_for_job(job['id'])):
+            continue
+        weights = json.loads(job['weights_json'] or '{}')
+        mapping = json.loads(job['ams_mapping_json'] or '[]')
+        mapping2 = json.loads(job['ams_mapping2_json'] or 'null')
+        ids = sorted(int(k) for k in weights) if weights else list(range(1, max(len(mapping), 4) + 1))
+        job['filaments'] = [{'id': i, 'grams': weights.get(str(i)),
+                             'tray': resolve_tray_for_filament(i, mapping, mapping2)} for i in ids]
+        forms.append(job)
+    return forms
+
 @app.before_request
 def protect_requests():
     if request.path == '/health':
@@ -864,6 +893,29 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
 </section>
 
 <section class="card">
+  <h2>Druckaufträge und Filamentzuordnung</h2>
+  <p class="muted">Slicer-Filamentnummern und AMS-Slots können verschieden sein. Fehlt die Druckerzuordnung, hier für diesen Auftrag bestätigen. Bereits gebuchte Positionen werden nicht verändert.</p>
+  {% for job in mapping_jobs %}
+  <form method="post" action="{{ url_for('set_job_mapping', job_id=job.id) }}" style="margin-bottom:18px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <strong>{{ job.subtask_name or job.filename or job.id[:8] }}</strong> · {{ job.state }}
+    {% if job.error %}<p class="muted">{{ job.error }}</p>{% endif %}
+    {% for filament in job.filaments %}
+    <div class="slot">
+      <label for="{{ job.id }}-f{{ filament.id }}">Filament {{ filament.id }}{% if filament.grams is not none %} · {{ '%.2f'|format(filament.grams) }} g{% endif %}</label>
+      <select id="{{ job.id }}-f{{ filament.id }}" name="filament_{{ filament.id }}">
+        <option value="-1">— Nicht zugeordnet —</option>
+        {% for slot in range(4) %}<option value="{{ slot }}" {% if filament.tray == slot %}selected{% endif %}>AMS Slot {{ slot + 1 }}</option>{% endfor %}
+        <option value="254" {% if filament.tray == 254 %}selected{% endif %}>Externe Spule</option>
+      </select>
+    </div>
+    {% endfor %}
+    <button type="submit" style="margin-top:10px">Zuordnung für diesen Auftrag bestätigen</button>
+  </form>
+  {% else %}<p class="muted">Kein Auftrag mit offener Filamentzuordnung.</p>{% endfor %}
+</section>
+
+<section class="card">
   <h2>Buchungsjournal (Letzte Positionen)</h2>
   <div style="overflow:auto;">
     <table>
@@ -938,6 +990,7 @@ def index():
         spoolman=spoolman_status,
         ams=ams_state,
         mapping=load_mapping(),
+        mapping_jobs=job_mapping_forms(),
         spools=fetch_spoolman_spools(),
         deductions=store.list_deductions(30),
         logs=list(log_buffer),
@@ -1000,6 +1053,27 @@ def manual_deduct():
         log(f"Fehler bei manueller Buchung: {exc}", logging.ERROR)
         return Response('Buchung konnte nicht vorgemerkt werden.', 500)
     return redirect(url_for("index"))
+
+@app.route('/jobs/<job_id>/mapping', methods=['POST'])
+def set_job_mapping(job_id):
+    try:
+        entries = {int(key.removeprefix('filament_')): int(value) for key, value in request.form.items()
+                   if key.startswith('filament_')}
+        if not entries or any(not 1 <= i <= 256 or tray not in (-1, 0, 1, 2, 3, 254) for i, tray in entries.items()):
+            raise ValueError('Invalid mapping')
+        mapping = [-1] * max(entries)
+        for i, tray in entries.items():
+            mapping[i - 1] = tray
+    except (TypeError, ValueError):
+        return Response('Ungültige Filamentzuordnung.', 400)
+    with queued_lock:
+        if job_id in queued_jobs or not store.set_job_mapping(job_id, mapping):
+            return Response('Auftrag wird verarbeitet, ist unbekannt oder enthält bereits Buchungen.', 409)
+    job = store.get_job(job_id)
+    if job['state'] != 'RUNNING':
+        enqueue_job(job_id)
+    log(f'Filamentzuordnung für Auftrag {job_id[:8]} durch Benutzer bestätigt.')
+    return redirect(url_for('index'))
 
 def main():
     threading.Thread(target=job_worker, daemon=True).start()

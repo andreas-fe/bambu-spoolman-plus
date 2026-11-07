@@ -29,7 +29,7 @@ Die Oberfläche zeigt den Verbindungsstatus. Die Buchung verwendet Spoolmans `PU
 
 ## AMS- und Druckdaten
 
-Slicer-Filament-IDs sind keine physischen Slot-IDs. Die Bridge verwendet `ams_mapping` bzw. `ams_mapping2` aus den MQTT-Druckdaten. Bei fehlender Zuordnung wird **kein Slot geraten**; der Auftrag wartet mit `WAITING_MAPPING`. Ob die Firmware diese Felder liefert, muss mit einem realen Druck geprüft werden. Mehrmaterialdruck und automatischer Spulenwechsel können ohne vollständige Zuordnung nicht zuverlässig abgerechnet werden.
+Slicer-Filament-IDs sind keine physischen Slot-IDs. Die Bridge verwendet `ams_mapping` bzw. `ams_mapping2` aus den MQTT-Druckdaten. Bei fehlender Zuordnung wird **kein Slot geraten**; der Auftrag wartet mit `WAITING_MAPPING`. Unter „Druckaufträge und Filamentzuordnung“ lässt sich die Slicer→AMS-Zuordnung für genau diesen Auftrag bestätigen. Bereits verarbeitete Positionen sind gesperrt; die Bestätigung gilt nicht für spätere Drucke. Ob die Firmware diese Felder liefert, muss mit einem realen Druck geprüft werden. Mehrmaterialdruck und automatischer Spulenwechsel können ohne vollständige Zuordnung nicht zuverlässig abgerechnet werden.
 
 Bei Dateien mit mehreren Druckplatten wird nur die durch `param=Metadata/plate_N.gcode` identifizierte Platte abgerechnet. Fehlt die Auswahl, wartet der Auftrag auf eindeutige Metadaten. Die heruntergeladene Datei wird nur im Arbeitsspeicher gehalten. Größenlimits: `MAX_3MF_BYTES` und `MAX_XML_BYTES`.
 

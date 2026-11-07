@@ -234,3 +234,49 @@ def test_waiting_dry_run_job_stays_simulated_after_mode_switch(bridge, monkeypat
     b.process_job(job)
     send.assert_not_called()
     assert b.store.get_job(job)['state'] == 'DRY_RUN'
+
+
+def test_per_job_mapping_form_resolves_only_selected_job(bridge, monkeypatch):
+    b = bridge
+    monkeypatch.setattr(b, 'fetch_spoolman_spools', lambda: [])
+    job = finished_job(b, {1: 1.25, 2: 0.21}, ams=[])
+    b.process_job(job)
+    client = b.app.test_client()
+    page = client.get('/')
+    assert page.status_code == 200
+    assert b'Filament 1' in page.data
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    response = client.post(f'/jobs/{job}/mapping', data={'csrf_token': token, 'filament_1': '1', 'filament_2': '0'})
+    assert response.status_code == 302
+    assert json.loads(b.store.get_job(job)['ams_mapping_json']) == [1, 0]
+    b.process_job(job)
+    rows = b.store.deductions_for_job(job)
+    assert [(r['tray_id'], r['grams'], r['status']) for r in rows] == [(1, 1.25, 'DRY_RUN'), (0, 0.21, 'DRY_RUN')]
+    next_job = b.store.create_or_update_running_job('other.3mf', '', None)
+    assert b.store.get_job(next_job)['ams_mapping_json'] is None
+    assert client.post(f'/jobs/{job}/mapping', data={'csrf_token': token, 'filament_1': '0'}).status_code == 409
+
+
+@pytest.mark.parametrize('values', [{}, {'filament_bad': '1'}, {'filament_0': '1'}, {'filament_1': '255'}, {'filament_257': '1'}])
+def test_job_mapping_rejects_invalid_inputs(bridge, monkeypatch, values):
+    b = bridge
+    monkeypatch.setattr(b, 'fetch_spoolman_spools', lambda: [])
+    job = finished_job(b, {1: 1})
+    client = b.app.test_client()
+    client.get('/')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    assert client.post(f'/jobs/{job}/mapping', data={'csrf_token': token, **values}).status_code == 400
+
+
+def test_job_mapping_cannot_change_active_worker(bridge, monkeypatch):
+    b = bridge
+    monkeypatch.setattr(b, 'fetch_spoolman_spools', lambda: [])
+    job = finished_job(b, {1: 1})
+    b.enqueue_job(job)
+    client = b.app.test_client()
+    client.get('/')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    assert client.post(f'/jobs/{job}/mapping', data={'csrf_token': token, 'filament_1': '1'}).status_code == 409
