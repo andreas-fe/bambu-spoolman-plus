@@ -909,6 +909,13 @@ ams_state = telemetry.ams
 printer_status = telemetry.status
 mqtt_client: mqtt.Client | None = None
 seq_counter = 1
+sequence_lock = threading.Lock()
+
+def next_sequence():
+    global seq_counter
+    with sequence_lock:
+        seq_counter = seq_counter % 2147483646 + 1
+        return str(seq_counter)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
     code = getattr(reason_code, "value", reason_code)
@@ -923,9 +930,9 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=No
     printer_status['state'] = 'OFFLINE'
 
 def send_pushall(client):
-    global seq_counter
-    seq_counter += 1
-    client.publish(f"device/{SERIAL}/request", json.dumps({"pushing": {"command": "pushall", "sequence_id": str(seq_counter)}}), qos=1)
+    result = client.publish(f"device/{SERIAL}/request", json.dumps({"pushing": {"command": "pushall", "sequence_id": next_sequence()}}), qos=0)
+    if result.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise ConnectionError("MQTT-Statusabfrage abgewiesen.")
 
 def on_message(client, userdata, msg):
     try:
@@ -992,19 +999,27 @@ def set_printer_light(action):
     client = mqtt_client
     if client is None or not client.is_connected():
         raise ConnectionError('Drucker nicht verbunden.')
+    sequence = telemetry.light_sequence
     result = client.publish(f"device/{SERIAL}/request", json.dumps({"system": {
-        "sequence_id": str(time.time_ns()), "command": "ledctrl",
+        "sequence_id": next_sequence(), "command": "ledctrl",
         "led_node": "chamber_light", "led_mode": action,
         "led_on_time": 500, "led_off_time": 500, "loop_times": 0, "interval_time": 0,
-    }}), qos=1)
+    }}), qos=0)
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
         raise ConnectionError('MQTT-Lichtbefehl abgewiesen.')
+    send_pushall(client)
+    if not telemetry.wait_for_light(sequence, action, timeout=6):
+        raise TimeoutError('Der Drucker hat die Lichtstellung nicht bestätigt. LAN-Steuerung und Entwicklermodus prüfen.')
 
 
 def refresh_printer_status():
     client = mqtt_client
     if client is None or not client.is_connected():
         return False
+    # Fresh explicit state reports remain valid; do not demand a second full
+    # report when the printer streams deltas or rate-limits pushall.
+    if 0 <= time.time() - printer_status.get("state_seen_at", 0) <= 30:
+        return True
     sequence = telemetry.state_sequence
     send_pushall(client)
     return telemetry.wait_for_state(sequence, timeout=6)

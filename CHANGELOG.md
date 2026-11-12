@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-12 — Korrektur Lichtsteuerung und Abschaltprüfung
+
+- MQTT-Anfragen verwenden QoS 0 und begrenzte, threadsicher erzeugte Sequenznummern statt Nanosekunden-Zeitstempeln für Lichtbefehle.
+- Lichtaktionen werden erst nach einer neuen passenden Zustandsmeldung als erfolgreich angezeigt; fehlende Bestätigung ergibt eine Fehlermeldung.
+- Bereits frische explizite Druckerzustände gelten für die Abschaltprüfung; nur veraltete Zustände benötigen eine neue Statusantwort. Offline- und Aktivzustände bleiben gesperrt, finale Prüfung bleibt erhalten.
+- 105 lokale Tests erfolgreich. Hardwareprüfung und Deployment dieser Korrektur stehen aus.
+
 ## 2026-11-12 — Oberfläche, Geräte und Filamentkatalog
 
 - Gemeinsame responsive Navigation und modernisierte Druckübersicht.

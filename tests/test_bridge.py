@@ -802,11 +802,20 @@ def test_camera_light_requires_csrf_and_connected_mqtt(bridge, monkeypatch):
     mqtt.is_connected.return_value = True
     mqtt.publish.return_value = SimpleNamespace(rc=0)
     monkeypatch.setattr(b, 'mqtt_client', mqtt)
+    def report_light(topic, payload, **kwargs):
+        command = json.loads(payload).get('system')
+        if command:
+            b.telemetry.update({'lights_report': [{'node': 'chamber_light', 'mode': command['led_mode']}]}, b.normalized_color)
+        return SimpleNamespace(rc=0)
+    mqtt.publish.side_effect = report_light
     for action in ('on', 'off'):
         assert client.post('/devices/light', data={'csrf_token': token, 'action': action}).status_code == 200
-        topic, payload = mqtt.publish.call_args.args
+        call = next(c for c in reversed(mqtt.publish.call_args_list) if 'system' in json.loads(c.args[1]))
+        topic, payload = call.args
+        assert call.kwargs['qos'] == 0
         assert topic == f'device/{b.SERIAL}/request'
         command = json.loads(payload)['system']
+        assert 0 < int(command['sequence_id']) < 2147483647
         assert command['led_node'] == 'chamber_light'
         assert command['led_mode'] == action
 
@@ -845,6 +854,7 @@ def test_power_off_requests_new_idle_state_independently_of_light(bridge, monkey
     assert result.status_code==200
     assert result.json['on'] is False
     assert sent.call_args.args[0] is False
+    bridge.printer_status['state_seen_at'] = time.time()-90
     monkeypatch.setattr(bridge,'send_pushall',lambda _:bridge.telemetry.update({'gcode_state':'RUNNING'},bridge.normalized_color))
     assert client.post('/devices/tapo',data={'csrf_token':token,'action':'off'}).status_code==409
     assert sent.call_count==1
@@ -870,3 +880,47 @@ def test_tapo_final_guard_still_blocks_a_newly_active_printer(monkeypatch):
     with pytest.raises(ShutdownBlocked):
         asyncio.run(TapoSwitch().request(False,lambda:False))
     device.off.assert_not_awaited()
+
+
+def test_light_publish_without_printer_confirmation_is_not_success(bridge, monkeypatch):
+    client = bridge.app.test_client()
+    client.get('/camera')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    mqtt = Mock()
+    mqtt.is_connected.return_value = True
+    mqtt.publish.return_value = SimpleNamespace(rc=0)
+    monkeypatch.setattr(bridge, 'mqtt_client', mqtt)
+    monkeypatch.setattr(bridge.telemetry, 'wait_for_light', lambda *a, **k: False)
+    response = client.post('/devices/light', data={'csrf_token': token, 'action': 'on'})
+    assert response.status_code == 504
+    assert 'error' in response.json
+
+
+def test_shutdown_accepts_fresh_explicit_state_without_demanding_pushall(bridge, monkeypatch):
+    import time
+    mqtt = Mock()
+    mqtt.is_connected.return_value = True
+    monkeypatch.setattr(bridge, 'mqtt_client', mqtt)
+    bridge.telemetry.update({'gcode_state': 'IDLE'}, bridge.normalized_color)
+    monkeypatch.setattr(bridge, 'send_pushall', Mock(side_effect=AssertionError('Unnecessary request')))
+    assert bridge.refresh_printer_status() is True
+    from bridge.devices import safe_to_power_off
+    assert safe_to_power_off(bridge.printer_status)
+    bridge.telemetry.update({'gcode_state': 'RUNNING'}, bridge.normalized_color)
+    assert not safe_to_power_off(bridge.printer_status)
+    mqtt.is_connected.return_value = False
+    assert bridge.refresh_printer_status() is False
+
+
+def test_pushall_uses_bounded_sequence_and_checks_publish_failure(bridge):
+    mqtt = Mock()
+    mqtt.publish.return_value = SimpleNamespace(rc=0)
+    bridge.seq_counter = 2147483646
+    bridge.send_pushall(mqtt)
+    command = json.loads(mqtt.publish.call_args.args[1])['pushing']
+    assert command['sequence_id'] == '1'
+    assert mqtt.publish.call_args.kwargs['qos'] == 0
+    mqtt.publish.return_value = SimpleNamespace(rc=4)
+    with pytest.raises(ConnectionError):
+        bridge.send_pushall(mqtt)

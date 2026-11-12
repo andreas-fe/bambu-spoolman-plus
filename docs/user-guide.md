@@ -47,7 +47,7 @@ Bearbeiten ist nur im aktivierten internen Backend verfügbar. Im Spoolman-Modus
 2. Über „Livebild schließen“ die Verbindung beenden. Seitenwechsel oder Ausblenden der Seite beendet sie ebenfalls; bei Bedarf erneut öffnen.
 3. „Licht einschalten“ und „Licht ausschalten“ senden einen separaten MQTT-Befehl an das Druckerlicht. Dafür muss kein Livebild laufen.
 
-„Lichtbefehl gesendet“ bestätigt das Senden, nicht eine unabhängig gemessene Lampenstellung. Das Druckerlicht ist unabhängig von der Tapo-Steckdose.
+Eine Erfolgsmeldung erscheint erst nach einer neuen passenden `lights_report`-Rückmeldung des Druckers. Bleibt diese aus, meldet die Oberfläche einen Fehler statt bloß erfolgreiches Senden. Die Rückmeldung ist der gemeldete Gerätezustand, keine optische Messung der Lampe. Das Druckerlicht ist unabhängig von der Tapo-Steckdose.
 
 Benötigt werden ein erreichbarer kompatibler LAN-Kamerastream, korrekte Druckerzugänge und für das Licht eine MQTT-Verbindung. Der Client unterstützt das implementierte A1/P1-Protokoll; X1/RTSP wird nicht unterstützt. Es kann nur eine Kameraanzeige gleichzeitig laufen. Bei „Kamera wird bereits angezeigt“ die andere Ansicht schließen. Bei Verbindungsfehlern LAN-Livebild und Druckerzugang prüfen und erneut öffnen. Ein Kamerafehler stoppt keine Verbrauchsbuchung.
 
@@ -61,7 +61,7 @@ Die Seite unterstützt die implementierte P110-Anbindung. Verfügbarkeit einzeln
 
 ### Bedienung und Abschaltsperre
 
-„Einschalten“ schaltet die Steckdose manuell ein. „Ausschalten“ fordert zunächst einen frischen Druckerstatus an. Erlaubt ist nur bestätigtes `IDLE` oder `FINISH` mit höchstens 30 Sekunden altem Status. Der Hilfsprozess prüft den Leerlauf unmittelbar vor dem Abschalten erneut. Laufender oder pausierter Druck, Offline-Zustand, veraltete Daten und fehlende Antwort sperren das Abschalten. Eingeschaltetes Druckerlicht blockiert es nicht.
+„Einschalten“ schaltet die Steckdose manuell ein. „Ausschalten“ prüft zunächst den letzten ausdrücklich gemeldeten Druckerzustand. Ist dieser älter als 30 Sekunden, wird ein neuer Status angefordert. Erlaubt ist nur bestätigtes `IDLE` oder `FINISH` mit höchstens 30 Sekunden altem Status. Der Hilfsprozess prüft Verbindung, Aktualität und Leerlauf unmittelbar vor dem Abschalten erneut. Laufender oder pausierter Druck, Offline-Zustand, veraltete Daten und fehlende Antwort sperren das Abschalten. Eingeschaltetes Druckerlicht blockiert es nicht.
 
 Bei einer Sperre Druckerstatus und Verbindung prüfen und später erneut versuchen. Ein bereits ausgeschalteter Drucker kann keinen frischen Leerlauf bestätigen. Es gibt keine automatische Abschaltung nach Druckende. Die Sperre prüft den Druckerzustand, keine Abkühltemperatur; vor manuellem Ausschalten die erforderliche Abkühlung berücksichtigen.
 

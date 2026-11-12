@@ -7,11 +7,20 @@ class PrinterTelemetry:
     def __init__(self):
         self._state_changed = threading.Condition()
         self._state_sequence = 0
+        self._light_sequence = 0
+        self._light_mode = None
         self.ams = {i: dict(type='-', material='', color='#888888', remain=-1, available=False, known=False) for i in range(4)}
         self.status = dict(state='OFFLINE', progress=0, subtask_name='', active_slot=None,
                            active_slot_label='Kein Slot erkannt', layer=0, stage=None)
 
     def update(self, payload, color_normalizer):
+        lights = payload.get('lights_report')
+        for light in lights if isinstance(lights, list) else []:
+            if isinstance(light, dict) and light.get('node') == 'chamber_light' and light.get('mode') in ('on', 'off'):
+                with self._state_changed:
+                    self._light_mode = light['mode']
+                    self._light_sequence += 1
+                    self._state_changed.notify_all()
         ams = payload.get('ams')
         ams = ams if isinstance(ams, dict) else {}
         units = ams.get('ams')
@@ -88,3 +97,13 @@ class PrinterTelemetry:
         """Light/AMS-only deltas must never validate an old idle state."""
         with self._state_changed:
             return self._state_changed.wait_for(lambda: self._state_sequence > after_sequence, timeout)
+
+    @property
+    def light_sequence(self):
+        with self._state_changed:
+            return self._light_sequence
+
+    def wait_for_light(self, after_sequence, mode, timeout=6):
+        with self._state_changed:
+            return self._state_changed.wait_for(
+                lambda: self._light_sequence > after_sequence and self._light_mode == mode, timeout)

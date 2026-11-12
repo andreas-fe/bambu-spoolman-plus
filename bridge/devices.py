@@ -169,9 +169,11 @@ def register_devices(app, host, access_code, printer, light_control=None, refres
             return jsonify(error='Lichtsteuerung nicht verfügbar.'), 503
         try:
             light_control(action)
+        except TimeoutError:
+            return jsonify(error='Keine Bestätigung der Lichtstellung vom Drucker. LAN-Steuerung und Entwicklermodus prüfen.'), 504
         except Exception:
-            return jsonify(error='Drucker nicht erreichbar. Lichtbefehl nicht gesendet.'), 503
-        return jsonify(message='Lichtbefehl gesendet: ' + ('Ein' if action == 'on' else 'Aus'))
+            return jsonify(error='Drucker nicht erreichbar. Lichtsteuerung fehlgeschlagen.'), 503
+        return jsonify(message='Lichtstellung vom Drucker bestätigt: ' + ('Ein' if action == 'on' else 'Aus'))
 
     @bp.get('/devices/camera')
     def camera():

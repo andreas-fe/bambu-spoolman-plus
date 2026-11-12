@@ -33,3 +33,16 @@ def test_light_delta_cannot_confirm_stale_idle_but_full_report_can():
         assert telemetry.wait_for_state(sequence, timeout=1)
     finally:
         timer.join()
+
+
+def test_light_confirmation_requires_new_matching_report():
+    telemetry = PrinterTelemetry()
+    normalize = lambda value: value
+    telemetry.update({'lights_report': [{'node': 'chamber_light', 'mode': 'on'}]}, normalize)
+    sequence = telemetry.light_sequence
+    assert not telemetry.wait_for_light(sequence, 'on', timeout=0)
+    telemetry.update({'gcode_state': 'IDLE'}, normalize)
+    assert not telemetry.wait_for_light(sequence, 'on', timeout=0)
+    telemetry.update({'lights_report': [{'node': 'chamber_light', 'mode': 'off'}]}, normalize)
+    assert not telemetry.wait_for_light(sequence, 'on', timeout=0)
+    assert telemetry.wait_for_light(sequence, 'off', timeout=0)
