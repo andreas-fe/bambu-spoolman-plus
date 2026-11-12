@@ -1,5 +1,23 @@
 # Änderungen
 
+## 2026-11-12 — Oberfläche, Geräte und Filamentkatalog
+
+- Gemeinsame responsive Navigation und modernisierte Druckübersicht.
+- Spulenkarten mit Suche und Filtern, lesbare Produktauswahl, erweiterte Angaben und gerichtete Bestandskorrekturen.
+- Öffentliche SpoolmanDB-Suche als Vorlage für neue Produkte; Herkunft wird gespeichert, Hersteller bei Bedarf angelegt.
+- Eigene Kameraseite mit explizitem Öffnen/Schließen und MQTT-Lichtsteuerung.
+- Tapo-Leistung, Tages-/Monatsenergie und Laufzeit mit optionalen Live-Abfragen; erneute Leerlaufbestätigung vor Abschalten.
+- Ausführliche Bedienungsanleitung; erweiterte Ausschlüsse privater Dateien.
+- Validierung: 101 lokale Tests erfolgreich. Hardware-/Drucknachweis und Simulation sind an der jeweiligen Installation gesondert zu prüfen.
+
+## v3.0.0-plus — 2026-11-11
+
+- Native Hersteller-, Produkt-, Spulen- und Lagerortverwaltung mit AMS-Zuordnung, SQLite-Einstellungen und JSON-/Produktexport.
+- Validierter, verlustarm archivierter Spoolman-Import mit unabhängigen internen IDs und gesichertem Offline-Umschaltpunkt.
+- Bestand, Verbrauch und bisheriges Journal werden intern atomar und idempotent gebucht; Altbuchungen bleiben gesperrt.
+- Kamera bei Bedarf, fehlertolerante Druckertelemetrie und isolierter Tapo-Client mit Abschaltsperre bei unbekanntem Druckerstatus.
+- 92 Regressionstests einschließlich Nebenläufigkeit, tatsächlichem Prozessabbruch und JSON-Wiederherstellung. Sicherungs-/Rollback-Verfahren dokumentiert.
+
 ## v2.4.3 — 2026-11-07
 
 - 3MF-Filamentdaten, Extruder-Mapping und gesonderte AMS-Druckstart-Zuordnung dokumentiert; keine feste Farbcodeliste der Bridge, sondern Vergleich mit den tatsächlich gemeldeten AMS-RGB-Werten.

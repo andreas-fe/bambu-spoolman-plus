@@ -1,6 +1,6 @@
 services:
   bambu-bridge:
-    image: bambu-spoolman-bridge:local
+    image: ${BRIDGE_IMAGE:-bambu-spoolman-bridge:local}
     build: ./bridge
     container_name: bambu-spoolman-bridge
     restart: unless-stopped

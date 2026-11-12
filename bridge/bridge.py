@@ -3,6 +3,19 @@
 
 from __future__ import annotations
 
+import sys
+
+# Support both module execution in Docker and the legacy script command.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+
+from bridge.inventory_db import apply_migrations, connection as inventory_connection
+from bridge.inventory_service import InventoryService, InventoryError
+from bridge.inventory_api import register_inventory, spoolman_view
+from bridge.devices import register_devices
+from bridge.printer_telemetry import PrinterTelemetry
+from bridge.ui import render_ui, SETTINGS_PAGE
+
 import ftplib
 import io
 import json
@@ -34,8 +47,8 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 # Metadaten & Konfiguration
 # ---------------------------------------------------------------------------
 
-APP_VERSION = "v2.4.3"
-APP_BUILD_TIME = "07.11.2026"
+APP_VERSION = "v3.0.0-plus"
+APP_BUILD_TIME = "11.11.2026"
 
 PRINTER_IP = os.getenv("BAMBU_HOST", "").strip()
 ACCESS_CODE = os.getenv("BAMBU_ACCESS_CODE", "").strip()
@@ -46,6 +59,9 @@ WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.getenv("WEB_PORT", "7913"))
 WEB_USERNAME = os.getenv("WEB_USERNAME", "").strip()
 WEB_PASSWORD = os.getenv("WEB_PASSWORD", "").strip()
+INVENTORY_BACKEND = os.getenv("INVENTORY_BACKEND", "spoolman").strip().lower()
+if INVENTORY_BACKEND not in ("spoolman", "internal"):
+    raise RuntimeError("INVENTORY_BACKEND muss spoolman oder internal sein.")
 DB_PATH = Path(os.getenv("DB_PATH", "/app/data/bridge.sqlite3"))
 MAPPING_FILE = Path(os.getenv("MAPPING_FILE", "/app/data/mapping.json"))
 MAX_3MF_BYTES = int(os.getenv("MAX_3MF_BYTES", str(200 * 1024 * 1024)))
@@ -401,6 +417,16 @@ class Store:
             return [str(r["id"]) for r in con.execute("SELECT id FROM jobs WHERE state='DRY_RUN' ORDER BY created_at").fetchall()]
 
 store = Store(DB_PATH)
+apply_migrations(DB_PATH)
+inventory_service = InventoryService(DB_PATH)
+with inventory_connection(DB_PATH) as db:
+    saved_settings = {r['key']: json.loads(r['value_json']) for r in db.execute("SELECT key,value_json FROM settings WHERE key IN ('dry_run','auto_match_filaments')")}
+DRY_RUN = bool(saved_settings.get('dry_run', DRY_RUN))
+AUTO_MATCH_FILAMENTS = bool(saved_settings.get('auto_match_filaments', AUTO_MATCH_FILAMENTS))
+if INVENTORY_BACKEND == 'internal':
+    with inventory_connection(DB_PATH) as db:
+        if not db.execute("SELECT 1 FROM settings WHERE key='cutover_job_rowid'").fetchone():
+            raise RuntimeError('Interner Bestand benötigt den geprüften Umschaltlauf.')
 
 # ---------------------------------------------------------------------------
 # Mapping Persistenz
@@ -409,6 +435,10 @@ store = Store(DB_PATH)
 DEFAULT_MAPPING = {**{str(i): None for i in range(4)}, "external": None}
 
 def load_mapping() -> dict[str, str | None]:
+    if INVENTORY_BACKEND == 'internal':
+        with inventory_connection(DB_PATH) as db:
+            rows = db.execute('SELECT slot_id,spool_id FROM ams_assignments WHERE printer_id=? AND released_at IS NULL', (SERIAL,)).fetchall()
+        return {**DEFAULT_MAPPING, **{r['slot_id']: str(r['spool_id']) for r in rows}}
     if MAPPING_FILE.exists():
         try:
             raw = json.loads(MAPPING_FILE.read_text(encoding="utf-8"))
@@ -420,6 +450,19 @@ def load_mapping() -> dict[str, str | None]:
     return DEFAULT_MAPPING.copy()
 
 def save_mapping(mapping: dict[str, str | None]) -> None:
+    if INVENTORY_BACKEND == 'internal':
+        with inventory_connection(DB_PATH) as db:
+            db.execute('BEGIN IMMEDIATE')
+            for spool in mapping.values():
+                if spool and not db.execute('SELECT 1 FROM spools WHERE id=? AND archived=0', (int(spool),)).fetchone():
+                    raise InventoryError('AMS-Zuordnung benötigt eine aktive Spule.')
+            now = store.now()
+            db.execute('UPDATE ams_assignments SET released_at=? WHERE printer_id=? AND released_at IS NULL', (now, SERIAL))
+            for slot, spool in mapping.items():
+                if spool:
+                    db.execute('INSERT INTO ams_assignments(printer_id,slot_id,spool_id,assigned_at) VALUES (?,?,?,?)', (SERIAL, slot, int(spool), now))
+            db.commit()
+        return
     tmp = MAPPING_FILE.with_suffix(f'.{uuid.uuid4().hex}.tmp')
     tmp.write_text(json.dumps(mapping, indent=2), encoding="utf-8")
     os.replace(tmp, MAPPING_FILE)
@@ -543,6 +586,10 @@ def extract_weights_via_ftps(filename: str, plate_index: int | None = None,
 spoolman_status = {'connected': None, 'error': ''}
 
 def fetch_spoolman_spools() -> list[dict[str, Any]]:
+    if INVENTORY_BACKEND == 'internal':
+        spools = spoolman_view(DB_PATH)
+        spoolman_status.update(connected=True, error='')
+        return spools
     try:
         r = requests.get(f"{SPOOLMAN_URL}/api/v1/spool", timeout=(3, 8))
         r.raise_for_status()
@@ -661,6 +708,12 @@ def book_pending(job_id: str) -> None:
             detail = 'Nur simuliert; keine spätere automatische Nachbuchung'
             store.set_deduction_status(row["id"], "DRY_RUN", detail + ('; ' + source if source else ''))
             log(f"[DRY-RUN] {row['grams']}g von Spule #{row['spool_id']}")
+        elif INVENTORY_BACKEND == 'internal':
+            try:
+                inventory_service.apply_ledger_deduction(row['id'])
+            except InventoryError as exc:
+                store.set_deduction_status(row['id'], 'REJECTED', str(exc))
+                log(f"Interne Buchung abgelehnt: {exc}", logging.WARNING)
         elif store.claim_deduction(row["id"]):
             status, detail = send_spoolman_deduction(row)
             store.set_deduction_status(row["id"], status, detail + ('; ' + source if source else ''))
@@ -851,8 +904,9 @@ def job_worker():
 # MQTT Listener
 # ---------------------------------------------------------------------------
 
-ams_state = {i: {"type": "-", "material": "", "color": "#888888", "remain": -1, "available": False, "known": False} for i in range(4)}
-printer_status = {"state": "OFFLINE", "progress": 0, "subtask_name": "", "active_slot": None, "active_slot_label": "Kein Slot erkannt", "layer": 0, "stage": None}
+telemetry = PrinterTelemetry()
+ams_state = telemetry.ams
+printer_status = telemetry.status
 mqtt_client: mqtt.Client | None = None
 seq_counter = 1
 
@@ -879,58 +933,7 @@ def on_message(client, userdata, msg):
         p = data.get("print") or {}
         if not p: return
 
-        ams_data = p.get("ams") or {}
-        if isinstance(ams_data, dict):
-            for unit in ams_data.get("ams", []):
-                for tray in unit.get("tray", []):
-                    tid = int(tray.get("id", -1))
-                    if tid in range(4):
-                        current = ams_state[tid]
-                        if 'tray_type' in tray:
-                            current['known'] = True
-                            current['material'] = str(tray['tray_type'] or '')
-                            current['available'] = bool(current['material'])
-                            current['type'] = tray.get('tray_sub_brands') or current['material'] or '-'
-                        if 'tray_color' in tray:
-                            current['color'] = '#' + (normalized_color(tray['tray_color']) or '888888')
-                        if 'remain' in tray: current['remain'] = tray['remain']
-                        if set(tray) == {'id'}:
-                            current.update(available=False, known=True)
-            if 'tray_exist_bits' in ams_data:
-                try:
-                    bits = int(str(ams_data['tray_exist_bits']), 16)
-                    for tid in range(4):
-                        if not bits & (1 << tid): ams_state[tid].update(available=False, known=True)
-                except ValueError: pass
-
-        ams_map = p.get("ams_mapping") or (ams_data.get("ams_mapping") if isinstance(ams_data, dict) else None)
-        ams_map2 = p.get("ams_mapping2") or (ams_data.get("ams_mapping2") if isinstance(ams_data, dict) else None)
-
-        raw_tray = ams_data.get("tray_now", p.get("tray_now")) if isinstance(ams_data, dict) else p.get("tray_now")
-        try: rt = int(raw_tray) if raw_tray is not None else None
-        except: rt = 255
-
-        if rt in range(4):
-            printer_status["active_slot"] = rt
-            printer_status["active_slot_label"] = f"AMS Slot {rt + 1}"
-        elif rt == 254:
-            printer_status["active_slot"] = 254
-            printer_status["active_slot_label"] = "Externe Spule"
-        elif rt == 255:
-            printer_status["active_slot"] = None
-            printer_status["active_slot_label"] = "Kein Slot erkannt"
-
-        state = str(p.get("gcode_state") or "").upper()
-        filename = str(p.get("gcode_file") or "")
-        subtask = str(p.get("subtask_name") or "")
-
-        if state:
-            printer_status["state"] = state
-        if 'mc_percent' in p:
-            printer_status["progress"] = max(0, min(100, int(float(p['mc_percent'] or 0))))
-        if 'layer_num' in p: printer_status['layer'] = int(p['layer_num'] or 0)
-        if 'stg_cur' in p: printer_status['stage'] = int(p['stg_cur'])
-        if subtask: printer_status["subtask_name"] = subtask
+        state, filename, subtask, ams_map, ams_map2 = telemetry.update(p, normalized_color)
 
         if state in ("RUNNING", "PREPARE"):
             previous = store.active_job_id()
@@ -984,6 +987,30 @@ def on_message(client, userdata, msg):
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or store.session_secret()
+register_inventory(app, DB_PATH, INVENTORY_BACKEND == "internal")
+def set_printer_light(action):
+    client = mqtt_client
+    if client is None or not client.is_connected():
+        raise ConnectionError('Drucker nicht verbunden.')
+    result = client.publish(f"device/{SERIAL}/request", json.dumps({"system": {
+        "sequence_id": str(time.time_ns()), "command": "ledctrl",
+        "led_node": "chamber_light", "led_mode": action,
+        "led_on_time": 500, "led_off_time": 500, "loop_times": 0, "interval_time": 0,
+    }}), qos=1)
+    if result.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise ConnectionError('MQTT-Lichtbefehl abgewiesen.')
+
+
+def refresh_printer_status():
+    client = mqtt_client
+    if client is None or not client.is_connected():
+        return False
+    sequence = telemetry.state_sequence
+    send_pushall(client)
+    return telemetry.wait_for_state(sequence, timeout=6)
+
+
+register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status)
 
 def job_mapping_forms():
     forms = []
@@ -1024,45 +1051,27 @@ def protect_requests():
     if request.method == 'POST':
         expected = session.get('csrf_token')
         if not expected or not secrets.compare_digest(request.form.get('csrf_token', ''), expected):
-            return Response('<!doctype html><html lang="de"><meta charset="utf-8"><title>Sitzung abgelaufen</title>'
-                            '<h1>Sitzung abgelaufen</h1><p>Diese Anfrage wurde nicht gebucht. '
-                            'Bitte öffne die Oberfläche neu und wiederhole die Eingabe.</p>'
-                            '<p><a href="/">Zur Bridge-Oberfläche</a></p></html>', 403, mimetype='text/html')
+            target = '/camera' if request.path == '/devices/light' else '/inventory' if request.path.startswith('/inventory') else '/devices' if request.path.startswith('/devices') else '/settings' if request.path.startswith('/settings') else '/'
+            active = {'/inventory':'inventory','/camera':'camera','/devices':'devices','/settings':'settings','/':'overview'}[target]
+            return Response(render_ui('''<div class="page-heading"><div><h1>Sitzung abgelaufen</h1><p>Diese Eingabe wurde nicht gespeichert.</p></div></div><section class="panel"><p>Öffne die Seite neu und wiederhole anschließend deine Eingabe.</p><a class="button" href="{{target}}">Seite neu öffnen</a></section>''', active=active, title='Sitzung abgelaufen', target=target), 403, mimetype='text/html')
 
-HTML_TEMPLATE = r"""<!doctype html>
-<html lang="de">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bambu → Spoolman Bridge {{ version }}</title>
-<style>
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;padding:22px;background:#17191d;color:#e8eaed;font:14px system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:1050px;margin:auto}.card{background:#242830;border:1px solid #353b46;border-radius:12px;padding:18px;margin:0 0 16px;box-shadow:0 4px 15px #0002}
-h1{font-size:22px;margin:0;color:#86efac}h2{font-size:16px;margin:0 0 12px}.muted{color:#aab2bf}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
-a{color:#93c5fd;text-decoration:none}a:hover{text-decoration:underline}.status{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:15px;padding:12px;background:#191d24;border-radius:8px}
-.pill{padding:4px 9px;border-radius:20px;background:#374151;font-weight:700}.warn-banner{background:#854d0e;color:#fef08a;padding:12px 16px;border-radius:8px;font-weight:bold;margin-bottom:16px;border:1px solid #ca8a04}
-.slot{display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1.2fr);gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid #3a404b}.slot:last-child{border:0}
-.swatch{display:inline-block;width:15px;height:15px;border-radius:50%;border:1px solid #ddd;vertical-align:middle;margin-right:8px}select,input{width:100%;background:#171b22;color:#eee;border:1px solid #4b5563;border-radius:6px;padding:9px}
-button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7px;font-weight:650;cursor:pointer}button:hover{background:#15803d}.secondary{background:#374151}.secondary:hover{background:#4b5563}
-.manual-grid{display:grid;grid-template-columns:minmax(240px,1.5fr) 120px auto;gap:10px;align-items:end}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #3a404b}th{color:#aab2bf;font-size:12px}
-.logs{height:220px;overflow:auto;background:#111419;border:1px solid #343b46;border-radius:8px;padding:10px;font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap}.small{font-size:12px}
-</style>
-</head><body><main>
+HTML_TEMPLATE = r"""
 
 {% if dry_run %}
 <div class="warn-banner">
-  ⚠️ DRY-RUN AKTIV: Alle Verbräuche werden im Journal simuliert und NICHT in Spoolman abgebucht. (Echtbetrieb: DRY_RUN=false in .env)
+  Simulation aktiv · Verbräuche werden protokolliert, der Bestand bleibt unverändert. Den Betriebsmodus kannst du unter Einstellungen ändern.
 </div>
 {% endif %}
 
 <section class="card">
   <div class="top">
     <div>
-      <h1>Bambu Lab → Spoolman Bridge <span style="font-size:14px;color:#aab2bf;font-weight:normal;">{{ version }} (Stand: {{ build_time }})</span></h1>
+      <div class="eyebrow">Dein Drucker</div><h1>Drucker & Verbrauch</h1>
   <div class="muted">A1 / A1 mini · AMS Lite · Automatische Verbrauchsbuchung</div>
     </div>
     <div>
       <button class="secondary" onclick="window.location.reload()">Aktualisieren</button>
-      <a href="{{ spoolman_url }}" target="_blank" rel="noopener" style="margin-left:8px;">Spoolman öffnen ↗</a>
+
     </div>
   </div>
   <div class="status">
@@ -1074,9 +1083,9 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
 </section>
 
 <section class="card">
-  <h2>AMS Lite Zuordnung</h2>
-    <p class="muted">Automatische Filamentzuordnung: {{ 'aktiv, über gleiche Farbe und Material; bei gleichen Spulen nach beobachtetem Slot und Restgewicht' if auto_match else 'deaktiviert' }}.
-    Beim Spulenwechsel zwischen Drucken die Spoolman-Zuordnung aktualisieren. Für automatische Zuordnung müssen die Slicer-Farben den tatsächlich ausgewählten AMS-Farben entsprechen.</p>
+  <h2>Spulen im AMS Lite</h2>
+    <p class="muted">Wähle für jeden Schacht die eingelegte Spule aus. Aktualisiere die Zuordnung nach einem Rollenwechsel.</p>
+    <details class="diagnostics"><summary class="muted small">Automatischer Abgleich: {{'aktiv' if auto_match else 'deaktiviert'}}</summary><p class="muted small">Farbe und Material werden mit den Slicer-Angaben verglichen. Bei mehreren passenden Spulen helfen der beobachtete Slot und das Restgewicht bei der Zuordnung.</p></details>
   <form method="post" action="/save">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {% for slot_id in range(4) %}
@@ -1084,14 +1093,14 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
         <div>
           <span class="swatch" style="background:{{ ams[slot_id].color }}"></span>
           <strong>AMS Slot {{ slot_id + 1 }}</strong>
-          <div class="muted small">{{ ams[slot_id].type }} · Rest: {{ ams[slot_id].remain }}%</div>
+          <div class="muted small">{{ ams[slot_id].type }} · Rest: {% if ams[slot_id].get('remain', -1)|int(-1)>=0 %}{{ ams[slot_id].remain }}%{% else %}unbekannt{% endif %}</div>
           <div class="muted small">Material/Farbcode: {% if ams[slot_id].known and ams[slot_id].available %}{{ ams[slot_id].material }} / <code>{{ ams[slot_id].color }}</code>{% else %}—{% endif %}</div>
         </div>
         <select name="slot_{{ slot_id }}">
-          <option value="">— Keine Spoolman-Spule —</option>
+          <option value="">Keine Spule zugeordnet</option>
           {% for s in spools %}
             <option value="{{ s.id }}" {% if mapping.get(slot_id|string) == s.id|string %}selected{% endif %}>
-              #{{ s.id }} · {{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g
+              {{ s.filament.vendor.name ~ ' · ' if s.filament and s.filament.vendor and s.filament.vendor.name else '' }}{{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g
             </option>
           {% endfor %}
         </select>
@@ -1100,10 +1109,10 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
     <div class="slot">
       <div><strong>Externe Spule</strong><div class="muted small">Spulenhalter / vt_tray</div></div>
       <select name="slot_external">
-        <option value="">— Keine Spoolman-Spule —</option>
+        <option value="">Keine Spule zugeordnet</option>
         {% for s in spools %}
           <option value="{{ s.id }}" {% if mapping.get('external') == s.id|string %}selected{% endif %}>
-            #{{ s.id }} · {{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g
+            {{ s.filament.vendor.name ~ ' · ' if s.filament and s.filament.vendor and s.filament.vendor.name else '' }}{{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g
           </option>
         {% endfor %}
       </select>
@@ -1113,7 +1122,7 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
 </section>
 
 <section class="card">
-  <h2>Manuelle Abbuchung</h2>
+  <h2>Verbrauch manuell erfassen</h2>
   <form method="post" action="/manual_deduct" class="manual-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <div>
@@ -1121,7 +1130,7 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
       <select name="spool_id" required>
         <option value="">— Spule wählen —</option>
         {% for s in spools %}
-          <option value="{{ s.id }}">#{{ s.id }} · {{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g</option>
+          <option value="{{ s.id }}">{{ s.filament.vendor.name ~ ' · ' if s.filament and s.filament.vendor and s.filament.vendor.name else '' }}{{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g</option>
         {% endfor %}
       </select>
     </div>
@@ -1129,7 +1138,7 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
       <label class="muted small">Menge (Gramm)</label>
       <input type="number" step="0.01" min="0.01" max="1000" name="grams" placeholder="Gramm" required>
     </div>
-    <button type="submit" style="background:#2563eb;">Jetzt buchen</button>
+    <button type="submit" >Verbrauch buchen</button>
   </form>
 </section>
 
@@ -1184,12 +1193,12 @@ button{background:#16a34a;color:white;border:0;padding:9px 14px;border-radius:7p
   </div>
 </section>
 
-<section class="card">
-  <h2>Live-Logs</h2>
+<section class="card"><details class="diagnostics">
+  <summary>Diagnose & Live-Logs</summary>
   <div class="logs" id="logs">{% for line in logs %}{{ line }}
-{% endfor %}</div>
+{% endfor %}</div></details>
 </section>
-</main>
+
 
 <script>
 let userScrolled=false;const logBox=document.getElementById('logs');logBox.addEventListener('scroll',()=>{userScrolled=(logBox.scrollHeight-logBox.scrollTop-logBox.clientHeight)>30;});
@@ -1217,17 +1226,18 @@ function refreshStatus(){fetch('/api/status').then(r=>r.json()).then(data=>{
 });}
 setInterval(refreshStatus,5000);
 </script>
-</body></html>"""
+"""
 
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "service": "bambu-spoolman-bridge", "version": APP_VERSION, "dry_run": DRY_RUN})
+    return jsonify({"ok": True, "service": "bambu-spoolman-bridge", "version": APP_VERSION, "dry_run": DRY_RUN, "inventory_backend": INVENTORY_BACKEND})
 
 @app.route("/")
 def index():
     session.setdefault("csrf_token", secrets.token_urlsafe(32))
-    return render_template_string(
-        HTML_TEMPLATE,
+    return render_ui(
+        HTML_TEMPLATE.replace("Spoolman", "Inventar") if INVENTORY_BACKEND == "internal" else HTML_TEMPLATE,
+        active='overview', title='Drucker & Verbrauch',
         version=APP_VERSION,
         build_time=APP_BUILD_TIME,
         csrf_token=session["csrf_token"],
@@ -1263,7 +1273,10 @@ def save():
     mapping["external"] = request.form.get("slot_external") or None
     if any(v is not None and (not v.isdigit() or int(v) <= 0) for v in mapping.values()):
         return Response('Ungültige Spulen-ID.', 400)
-    save_mapping(mapping)
+    try:
+        save_mapping(mapping)
+    except InventoryError as exc:
+        return Response(str(exc), 400, mimetype='text/plain')
     # Only fill assignments that were missing; retain all already recorded spool IDs.
     for job_id in store.recoverable_jobs():
         job = store.get_job(job_id)
@@ -1321,6 +1334,23 @@ def set_job_mapping(job_id):
         enqueue_job(job_id)
     log(f'Filamentzuordnung für Auftrag {job_id[:8]} durch Benutzer bestätigt.')
     return redirect(url_for('index'))
+
+@app.route('/settings', methods=['GET', 'POST'])
+def app_settings():
+    global DRY_RUN, AUTO_MATCH_FILAMENTS
+    session.setdefault('csrf_token', secrets.token_urlsafe(32))
+    if request.method == 'POST':
+        dry_run = request.form.get('dry_run') == 'on'
+        auto_match = request.form.get('auto_match') == 'on'
+        with inventory_connection(DB_PATH) as db:
+            db.execute('BEGIN IMMEDIATE')
+            for key, value in [('dry_run', dry_run), ('auto_match_filaments', auto_match)]:
+                db.execute('INSERT INTO settings(key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', (key, json.dumps(value), store.now()))
+            db.commit()
+        DRY_RUN, AUTO_MATCH_FILAMENTS = dry_run, auto_match
+        return redirect('/settings?saved=1')
+    return render_ui(SETTINGS_PAGE, active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
+
 
 def main():
     threading.Thread(target=job_worker, daemon=True).start()

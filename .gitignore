@@ -12,3 +12,16 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+
+# Private Geräte-/Deploymentdaten und lokale Schlüssel
+.private*/
+secrets/
+.ssh/
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*.log
+*.tar
+*.tar.gz
+*.zip

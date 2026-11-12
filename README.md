@@ -1,6 +1,6 @@
-# Bambu → Spoolman Bridge
+# Bambu-Spoolman-Plus
 
-Lokale Docker-Bridge für Bambu Lab A1/A1 mini mit AMS Lite und eine **bereits laufende Spoolman-Instanz**. Nach `FINISH` werden die Slicer-Verbrauchswerte aus der gedruckten 3MF-Datei pro Filament der zugeordneten Spoolman-Spule belastet. Bei Abbruch wird eine ausdrücklich gekennzeichnete Schätzung automatisch verbucht.
+Lokale Docker-Anwendung für Bambu Lab A1/A1 mini mit AMS Lite: Drucküberwachung, automatische Verbrauchsbuchung, integrierte Spulenverwaltung, Kamera mit Lichtsteuerung und Tapo-Steckdosensteuerung mit Energieanzeige. Unterstützt den bestehenden Spoolman-Betrieb und nach kontrollierter Migration ein eigenständiges internes Inventar. Nach `FINISH` werden die Slicer-Verbrauchswerte aus der 3MF-Datei den zugeordneten Spulen belastet; Abbruchmengen bleiben ausdrücklich gekennzeichnete Schätzungen.
 
 ## Funktionen im Überblick
 
@@ -13,7 +13,15 @@ Lokale Docker-Bridge für Bambu Lab A1/A1 mini mit AMS Lite und eine **bereits l
 - **Dauerhafter Betrieb:** SQLite-Journal, eingefrorene Buchungspläne, sichere Wiederaufnahme, Dry-Run, persistente Formularsitzungen und optionale Web-Anmeldung.
 - **Docker auf QNAP:** Eigenständige Bridge für einen bestehenden Spoolman, Healthcheck, Log-Rotation, SSH-Deployment mit Backup und Rückfallmöglichkeit.
 
-## Aktuelle Oberfläche
+## Bedienung und neue Funktionen
+
+Die gemeinsame Navigation führt zu Drucker & Verbrauch, Filamente & Spulen, Kamera, Steckdose & Energie und Einstellungen. Eine ausführliche [Bedienungsanleitung](docs/user-guide.md) beschreibt Einrichtung, täglichen Ablauf, Fehlermeldungen und Grenzen. Migration und Wiederherstellung stehen unter [Plus-Betrieb](docs/plus-operations.md).
+
+- **Spulenverwaltung:** Suchbare Spulenkarten, Material-/Herstellerfilter, verständliche Produktnamen, Bestandskorrekturen und Exporte. Neue Produkte können aus dem öffentlichen SpoolmanDB-Katalog vorbereitet werden.
+- **Kamera & Licht:** Livebild bei Bedarf öffnen und schließen; Druckerlicht direkt ein- oder ausschalten.
+- **Tapo P110:** Manuell schalten, Leistung, Tages-/Monatsverbrauch und Laufzeit ablesen; optionale Live-Abfragen. Abschalten verlangt einen frisch bestätigten Druckerleerlauf.
+
+## Frühere Oberfläche
 
 ![Bambu-Spoolman Bridge v2.4.3 – aktuelle GUI mit anonymisierten Beispieldaten](docs/assets/gui-v2.4.3.jpg)
 
@@ -169,3 +177,9 @@ Die Tests verwenden temporäre SQLite-Datenbanken und simulierte API-Aufrufe. Si
 ## Lizenz
 
 MIT
+
+## Bambu-Spoolman-Plus
+
+Die integrierte Betriebsart ergänzt native Hersteller, Filamentprodukte, physische Spulen, Lagerorte, AMS-Zuordnung, transaktionale Verbrauchsbuchung und JSON-Austausch. `/inventory`, `/settings` und `/devices` sind aus der Hauptoberfläche erreichbar. Die bestehende MQTT-/FTPS-/3MF-Auswertung bleibt erhalten.
+
+Der Standard `INVENTORY_BACKEND=spoolman` erhält den bisherigen Betrieb. Die interne Betriebsart verlangt eine kontrollierte Offline-Migration mit Vollbackup und Testimport. Anleitung, Rückkehrverfahren und Gerätegrenzen: [Plus-Betrieb](docs/plus-operations.md). Geheimnisse gehören in private Laufzeitkonfiguration, niemals in Git.

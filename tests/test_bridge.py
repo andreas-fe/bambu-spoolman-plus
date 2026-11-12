@@ -408,7 +408,7 @@ def test_session_and_csrf_survive_application_restart(bridge, monkeypatch):
     assert len(restarted.store.list_deductions()) == 1
     invalid = second_client.post('/manual_deduct', data={'csrf_token': 'stale', 'spool_id': '1', 'grams': '0.21'})
     assert invalid.status_code == 403
-    assert b'Zur Bridge-Oberfl' in invalid.data
+    assert b'Seite neu' in invalid.data
     assert len(restarted.store.list_deductions()) == 1
 
 
@@ -594,3 +594,279 @@ def test_matching_color_with_missing_spool_mapping_explains_actual_problem(bridg
     b.store.update_job(job,filaments_json=json.dumps({'1':{'color':'#104831','material':'PLA'}}))
     b.process_job(job)
     assert 'keine Spoolman-Spulenzuordnung' in b.store.deductions_for_job(job)[0]['detail']
+
+
+def enable_internal(b):
+    from bridge.inventory_db import connection
+    from bridge.spoolman_import import apply_snapshot
+    b.INVENTORY_BACKEND = 'internal'
+    b.DRY_RUN = False
+    apply_snapshot(b.DB_PATH, {'vendors': [], 'filaments': [{'id': 1, 'name': 'PLA'}],
+                              'spools': [{'id': 50, 'filament': {'id': 1}, 'remaining_weight': 100}]})
+    with connection(b.DB_PATH) as db:
+        boundary = db.execute('SELECT COALESCE(MAX(rowid),0) FROM jobs').fetchone()[0]
+        db.execute("INSERT INTO settings(key,value_json,updated_at) VALUES ('cutover_job_rowid',?,'t')", (json.dumps(boundary),))
+    return 1
+
+
+def test_internal_worker_commits_once_without_http(bridge):
+    from bridge.inventory_db import connection
+    b = bridge
+    sid = enable_internal(b)
+    job = b.store.create_manual_job(sid, None, 5)
+    b.process_job(job)
+    b.process_job(job)
+    assert b.store.get_job(job)['state'] == 'DONE'
+    with connection(b.DB_PATH) as db:
+        assert db.execute('SELECT current_weight_g FROM spools').fetchone()[0] == 95
+        assert db.execute('SELECT COUNT(*) FROM consumption_entries').fetchone()[0] == 1
+        assert db.execute('SELECT COUNT(*) FROM inventory_job_plans').fetchone()[0] == 1
+
+
+def test_internal_worker_rolls_back_journal_and_balance_on_failure(bridge):
+    from bridge.inventory_db import connection
+    b = bridge
+    sid = enable_internal(b)
+    job = b.store.create_manual_job(sid, None, 5)
+    row = b.store.deductions_for_job(job)[0]
+    with connection(b.DB_PATH) as db:
+        db.execute("CREATE TRIGGER fail_done BEFORE UPDATE OF status ON deductions WHEN NEW.status='DONE' BEGIN SELECT RAISE(ABORT,'crash'); END")
+    with pytest.raises(sqlite3.IntegrityError):
+        b.inventory_service.apply_ledger_deduction(row['id'])
+    with connection(b.DB_PATH) as db:
+        assert db.execute('SELECT current_weight_g FROM spools').fetchone()[0] == 100
+        assert db.execute('SELECT COUNT(*) FROM consumption_entries').fetchone()[0] == 0
+        assert db.execute('SELECT status FROM deductions').fetchone()[0] == 'PENDING'
+        db.execute('DROP TRIGGER fail_done')
+    assert b.inventory_service.apply_ledger_deduction(row['id'])['applied']
+
+
+def test_internal_concurrent_workers_and_historical_barrier(bridge):
+    from concurrent.futures import ThreadPoolExecutor
+    from bridge.inventory_service import InventoryError
+    from bridge.inventory_db import connection
+    b = bridge
+    old = b.store.create_manual_job(1, None, 5)
+    sid = enable_internal(b)
+    with pytest.raises(InventoryError):
+        b.inventory_service.apply_ledger_deduction(b.store.deductions_for_job(old)[0]['id'])
+    job = b.store.create_manual_job(sid, None, 5)
+    row = b.store.deductions_for_job(job)[0]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: b.inventory_service.apply_ledger_deduction(row['id']), range(8)))
+    assert sum(r['applied'] for r in results) == 1
+    with connection(b.DB_PATH) as db:
+        assert db.execute('SELECT current_weight_g FROM spools').fetchone()[0] == 95
+
+
+def test_inventory_routes_share_auth_and_csrf_protection(bridge):
+    b = bridge
+    client = b.app.test_client()
+    assert client.get('/inventory').status_code == 200
+    assert client.get('/api/inventory/spools').json == []
+    assert client.post('/inventory/vendors/save', data={'name': 'x'}).status_code == 403
+    b.WEB_USERNAME, b.WEB_PASSWORD = 'test', 'secret'
+    assert client.get('/inventory/export').status_code == 401
+
+
+def test_native_json_roundtrip_including_journal(bridge, tmp_path):
+    from bridge.inventory_db import apply_migrations
+    from bridge.inventory_exchange import export_inventory, restore_inventory
+    b = bridge
+    sid = enable_internal(b)
+    job = b.store.create_manual_job(sid, None, 4)
+    b.process_job(job)
+    exported = export_inventory(b.DB_PATH)
+    assert all(r['key'] != 'flask_secret_key' for r in exported['tables']['runtime'])
+    target = tmp_path / 'restored.sqlite3'
+    b.Store(target)
+    apply_migrations(target)
+    restore_inventory(target, exported)
+    assert export_inventory(target) == exported
+    with pytest.raises(ValueError):
+        restore_inventory(target, exported)
+
+
+def test_tapo_off_is_blocked_without_fresh_idle_status(bridge):
+    import time
+    from bridge.devices import safe_to_power_off
+    b = bridge
+    client = b.app.test_client()
+    client.get('/')
+    with client.session_transaction() as s:
+        token = s['csrf_token']
+    assert client.post('/devices/tapo', data={'csrf_token': token, 'action': 'off'}).status_code == 409
+    assert not safe_to_power_off({'state': 'RUNNING', 'state_seen_at': time.time()})
+    assert not safe_to_power_off({'state': 'IDLE', 'state_seen_at': time.time()-60})
+    assert safe_to_power_off({'state': 'IDLE', 'state_seen_at': time.time()})
+
+
+def test_camera_frame_reader_handles_fragmented_data():
+    from bridge.devices import recv_exact
+    sock = Mock()
+    sock.recv.side_effect = [b'ab', b'c', b'def']
+    assert recv_exact(sock, 6) == b'abcdef'
+    sock.recv.side_effect = [b'']
+    with pytest.raises(ConnectionError):
+        recv_exact(sock, 1)
+
+
+def test_settings_are_persisted_and_csrf_protected(bridge):
+    from bridge.inventory_db import connection
+    client = bridge.app.test_client()
+    assert client.get('/settings').status_code == 200
+    with client.session_transaction() as s:
+        token = s['csrf_token']
+    assert client.post('/settings', data={'csrf_token': token, 'auto_match': 'on'}).status_code == 302
+    assert bridge.DRY_RUN is False
+    assert bridge.AUTO_MATCH_FILAMENTS is True
+    with connection(bridge.DB_PATH) as db:
+        assert json.loads(db.execute("SELECT value_json FROM settings WHERE key='dry_run'").fetchone()[0]) is False
+
+
+def test_native_tapo_crash_cannot_kill_bridge(bridge, monkeypatch):
+    from bridge.devices import TapoSwitch
+    from bridge import devices
+    monkeypatch.setattr(devices.subprocess, 'run', Mock(return_value=SimpleNamespace(returncode=-11, stdout='', stderr='native failure')))
+    with pytest.raises(ValueError):
+        TapoSwitch().run()
+    assert bridge.app.test_client().get('/health').status_code == 200
+    monkeypatch.setattr(devices.subprocess, 'run', Mock(return_value=SimpleNamespace(returncode=0, stdout='{"on":false}')))
+    assert TapoSwitch().run() == {'on': False}
+
+
+def test_internal_process_death_rolls_back_and_recovers(bridge):
+    import subprocess
+    import sys
+    from bridge.inventory_db import connection
+    b = bridge
+    sid = enable_internal(b)
+    job = b.store.create_manual_job(sid, None, 5)
+    deduction = b.store.deductions_for_job(job)[0]['id']
+    with connection(b.DB_PATH) as db:
+        db.execute("CREATE TRIGGER crash_before_commit AFTER UPDATE OF current_weight_g ON spools BEGIN SELECT crash_process(); END")
+    child = r'''
+import os,sys
+from contextlib import contextmanager
+from bridge import inventory_service
+from bridge.inventory_db import connection
+@contextmanager
+def crash_connection(path):
+    with connection(path) as db:
+        db.create_function('crash_process',0,lambda:os._exit(23))
+        yield db
+inventory_service.connection=crash_connection
+inventory_service.InventoryService(sys.argv[1]).apply_ledger_deduction(int(sys.argv[2]))
+'''
+    result = subprocess.run([sys.executable, '-c', child, str(b.DB_PATH), str(deduction)], timeout=20)
+    assert result.returncode == 23
+    with connection(b.DB_PATH) as db:
+        assert db.execute('SELECT current_weight_g FROM spools').fetchone()[0] == 100
+        assert db.execute('SELECT COUNT(*) FROM consumption_entries').fetchone()[0] == 0
+        assert db.execute('SELECT COUNT(*) FROM inventory_movements').fetchone()[0] == 0
+        assert db.execute('SELECT status FROM deductions WHERE id=?', (deduction,)).fetchone()[0] == 'PENDING'
+        db.execute('DROP TRIGGER crash_before_commit')
+    assert b.inventory_service.apply_ledger_deduction(deduction)['applied']
+
+
+def test_native_restore_preserves_cutover_with_gaps_in_job_rowids(bridge, tmp_path):
+    from bridge.inventory_db import apply_migrations, connection
+    from bridge.inventory_exchange import export_inventory, restore_inventory
+    from bridge.inventory_service import InventoryService
+    b = bridge
+    old = b.store.create_manual_job(1, None, 1)
+    with connection(b.DB_PATH) as db:
+        db.execute('UPDATE jobs SET rowid=41 WHERE id=?', (old,))
+    enable_internal(b)
+    path = tmp_path / 'restored-gap.sqlite3'
+    restored = b.Store(path)
+    apply_migrations(path)
+    restore_inventory(path, export_inventory(b.DB_PATH))
+    job = restored.create_manual_job(1, None, 1)
+    deduction = restored.deductions_for_job(job)[0]['id']
+    assert InventoryService(path).apply_ledger_deduction(deduction)['applied']
+
+
+def test_camera_light_requires_csrf_and_connected_mqtt(bridge, monkeypatch):
+    from types import SimpleNamespace
+    b = bridge
+    client = b.app.test_client()
+    assert client.post('/devices/light', data={'action': 'on'}).status_code == 403
+    assert client.get('/devices').status_code == 200
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    assert client.post('/devices/light', data={'csrf_token': token, 'action': 'invalid'}).status_code == 400
+    monkeypatch.setattr(b, 'mqtt_client', None)
+    assert client.post('/devices/light', data={'csrf_token': token, 'action': 'on'}).status_code == 503
+    mqtt = Mock()
+    mqtt.is_connected.return_value = True
+    mqtt.publish.return_value = SimpleNamespace(rc=0)
+    monkeypatch.setattr(b, 'mqtt_client', mqtt)
+    for action in ('on', 'off'):
+        assert client.post('/devices/light', data={'csrf_token': token, 'action': action}).status_code == 200
+        topic, payload = mqtt.publish.call_args.args
+        assert topic == f'device/{b.SERIAL}/request'
+        command = json.loads(payload)['system']
+        assert command['led_node'] == 'chamber_light'
+        assert command['led_mode'] == action
+
+
+def test_inventory_cards_and_named_selects_render(bridge):
+    b = bridge
+    enable_internal(b)
+    from flask import Flask
+    from bridge.inventory_api import register_inventory
+    app = Flask(__name__)
+    app.secret_key = 'test'
+    register_inventory(app, b.DB_PATH, True)
+    response = app.test_client().get('/inventory')
+    assert response.status_code == 200
+    assert b'spool-cards' in response.data
+    assert b'material-filter' in response.data
+    assert b'<select name="filament_id">' in response.data
+
+
+def test_power_off_requests_new_idle_state_independently_of_light(bridge, monkeypatch):
+    import time
+    from bridge import devices
+    client = bridge.app.test_client()
+    client.get('/devices')
+    with client.session_transaction() as session:
+        token = session['csrf_token']
+    bridge.printer_status.update(state='IDLE', state_seen_at=time.time()-90, lights_report=[{'node':'chamber_light','mode':'on'}])
+    sent = Mock(return_value={'on': False})
+    monkeypatch.setattr(devices.TapoSwitch, 'run', sent)
+    fake_mqtt=Mock();fake_mqtt.is_connected.return_value=True
+    monkeypatch.setattr(bridge,'mqtt_client',fake_mqtt)
+    def fresh(_):
+        bridge.telemetry.update({'gcode_state':'IDLE','lights_report':[{'node':'chamber_light','mode':'on'}]}, bridge.normalized_color)
+    monkeypatch.setattr(bridge,'send_pushall',fresh)
+    result=client.post('/devices/tapo',data={'csrf_token':token,'action':'off'})
+    assert result.status_code==200
+    assert result.json['on'] is False
+    assert sent.call_args.args[0] is False
+    monkeypatch.setattr(bridge,'send_pushall',lambda _:bridge.telemetry.update({'gcode_state':'RUNNING'},bridge.normalized_color))
+    assert client.post('/devices/tapo',data={'csrf_token':token,'action':'off'}).status_code==409
+    assert sent.call_count==1
+
+
+def test_power_units_and_missing_measurements_remain_explicit():
+    from bridge.devices import power_measurements
+    assert power_measurements({'current_power':12500,'today_energy':450,'month_energy':1200,'today_runtime':70},{'current_power':12}) == dict(power_w=12.5,today_energy_wh=450.0,month_energy_wh=1200.0,today_runtime_min=70.0)
+    assert power_measurements({}, {'current_power':13})['power_w']==13
+    values=power_measurements({'current_power':float('nan'),'today_energy':-1}, {})
+    assert values['power_w'] is None and values['today_energy_wh'] is None
+
+
+def test_tapo_final_guard_still_blocks_a_newly_active_printer(monkeypatch):
+    import asyncio,sys
+    from unittest.mock import AsyncMock
+    from bridge.devices import TapoSwitch, ShutdownBlocked
+    from bridge import devices
+    device=SimpleNamespace(get_device_info=AsyncMock(return_value=SimpleNamespace(device_on=True)),off=AsyncMock())
+    client=SimpleNamespace(p110=AsyncMock(return_value=device))
+    monkeypatch.setitem(sys.modules,'tapo',SimpleNamespace(ApiClient=lambda *_:client))
+    monkeypatch.setattr(devices,'read_secret',lambda _: 'test-only')
+    with pytest.raises(ShutdownBlocked):
+        asyncio.run(TapoSwitch().request(False,lambda:False))
+    device.off.assert_not_awaited()

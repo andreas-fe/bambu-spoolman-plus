@@ -1,0 +1,134 @@
+"""Human-readable inventory presentation; identifiers stay in form values only."""
+import json
+import re
+from collections import Counter
+
+KINDS = ('spools', 'filaments', 'vendors', 'locations')
+TITLES = dict(spools='Physische Spulen', filaments='Filamentprodukte', vendors='Hersteller', locations='Lagerorte')
+SINGULAR = dict(spools='Spule', filaments='Filamentprodukt', vendors='Hersteller', locations='Lagerort')
+COLUMNS = dict(
+    spools=(('filament_id', 'Filament & Farbe'), ('location_id', 'Lagerort'), ('current_weight_g', 'Restbestand'), ('archived', 'Status'), ('batch', 'Charge')),
+    filaments=(('name', 'Produkt'), ('vendor_id', 'Hersteller'), ('material', 'Material'), ('color_name', 'Farbe'), ('net_weight_g', 'Spulengröße')),
+    vendors=(('name', 'Hersteller'),), locations=(('name', 'Lagerort'), ('notes', 'Beschreibung')),
+)
+BASIC = dict(spools=('filament_id', 'location_id', 'archived'),
+             filaments=('name', 'vendor_id', 'material', 'color_name', 'color_json', 'net_weight_g'),
+             vendors=('name',), locations=('name', 'notes'))
+ADVANCED = dict(spools=('batch', 'empty_spool_weight_g', 'notes'),
+                filaments=('subtype', 'diameter_mm', 'density_g_cm3', 'article_number'), vendors=(), locations=())
+
+
+def weight(value):
+    if value is None:
+        return 'Gewicht unbekannt'
+    text = f'{value:,.1f}'.replace(',', '_').replace('.', ',').replace('_', '.')
+    return text.removesuffix(',0') + ' g'
+
+
+def _color(row):
+    try:
+        value = json.loads(row.get('color_json') or 'null')
+    except (ValueError, TypeError):
+        return None
+    if isinstance(value, str) and re.fullmatch(r'#?[0-9a-fA-F]{6,8}', value):
+        return '#' + value.lstrip('#').upper()
+    return None
+
+
+def present_inventory(data):
+    lookup = {kind: {row['id']: row for row in rows} for kind, rows in data.items()}
+    names = {kind: {} for kind in data}
+    for kind in ('vendors', 'locations'):
+        names[kind] = {row['id']: row['name'] for row in data[kind]}
+    for row in data['filaments']:
+        color_label = row['color_name'] or ('Farbton ' + _color(row) if _color(row) else '')
+        parts = (lookup['vendors'].get(row['vendor_id'], {}).get('name'), row['name'], row['material'], color_label)
+        names['filaments'][row['id']] = ' · '.join(dict.fromkeys(str(v).strip() for v in parts if v)) or 'Filament ohne Bezeichnung'
+    spools = []
+    for row in data['spools']:
+        product = lookup['filaments'].get(row['filament_id'], {})
+        location = names['locations'].get(row['location_id'], 'Ohne Lagerort')
+        product_name = names['filaments'].get(row['filament_id'], 'Filament nicht verfügbar')
+        label = ' · '.join([product_name, location, weight(row['current_weight_g'])] + ([f"Charge {row['batch']}"] if row['batch'] else []))
+        if row['archived']:
+            label += ' · Archiviert'
+        names['spools'][row['id']] = label
+        color = _color(product) or '#888888'
+        spools.append(dict(id=row['id'], product_name=product.get('name') or 'Filament ohne Bezeichnung',
+                           material=product.get('material') or 'Material offen', subtype=product.get('subtype') or '',
+                           vendor=names['vendors'].get(product.get('vendor_id'), 'Hersteller offen'),
+                           color_name=product.get('color_name') or '', color=color, location=location,
+                           batch=row['batch'], archived=row['archived'], weight_label=weight(row['current_weight_g']),
+                           current_weight_g=row['current_weight_g'], initial_weight_g=row['initial_weight_g'],
+                           search=' '.join(str(v or '') for v in (product_name, location, row['batch'], row['notes'])).casefold()))
+    duplicates = Counter(names['spools'].values())
+    seen = Counter()
+    for spool in spools:
+        label = names['spools'][spool['id']]
+        if duplicates[label] > 1:
+            seen[label] += 1
+            names['spools'][spool['id']] = f'{label} · Exemplar {seen[label]}'
+        spool['label'] = names['spools'][spool['id']]
+    def display(kind, row, field):
+        if field in ('vendor_id', 'filament_id', 'location_id'):
+            source = {'vendor_id': 'vendors', 'filament_id': 'filaments', 'location_id': 'locations'}[field]
+            return names[source].get(row.get(field), 'Ohne Lagerort' if field == 'location_id' else 'Nicht hinterlegt')
+        if field == 'color_name':
+            return row.get('color_name') or ('Farbton ' + _color(row) if _color(row) else 'Nicht hinterlegt')
+        if field == 'archived':
+            return 'Archiviert' if row[field] else 'Im Bestand'
+        if field.endswith('_g'):
+            return weight(row.get(field))
+        return row.get(field) or '—'
+    materials = sorted({row['material'] for row in data['filaments'] if row['material']} | {'PLA', 'PETG', 'ABS', 'ASA', 'TPU', 'PA', 'PC', 'PVA', 'HIPS', 'PCTG'})
+    diameters = sorted({float(row['diameter_mm']) for row in data['filaments'] if row['diameter_mm'] is not None} | {1.75, 2.85, 3.0})
+    return dict(names=names, spool_views=spools, display=display, materials=materials, product_colors={r['id']: _color(r) or '#888888' for r in data['filaments']},
+                diameters=[f'{v:g}' for v in diameters], kinds=KINDS, titles=TITLES,
+                singular=SINGULAR, columns=COLUMNS, basic=BASIC, advanced=ADVANCED)
+
+
+PAGE = r'''
+{% macro field(kind, name) %}
+<label{% if name=='notes' %} class="wide"{% endif %}>{{labels[name]}}
+{% if name in ('vendor_id','filament_id','location_id') %}
+<select name="{{name}}">{% set source={'vendor_id':'vendors','filament_id':'filaments','location_id':'locations'}[name] %}<option value="">{{'Filament auswählen …' if name=='filament_id' else ('Ohne Lagerort' if name=='location_id' else 'Hersteller offen')}}</option>{% for item in data[source]|sort(attribute='name',case_sensitive=false) %}<option value="{{item.id}}">{{names[source][item.id]}}</option>{% endfor %}</select>
+{% elif name=='archived' %}<select name="archived"><option value="0">Im Bestand</option><option value="1">Archiviert</option></select>
+{% elif name=='material' %}<select name="material" onchange="customMaterial(this)"><option value="">Material auswählen …</option>{% for material in materials %}<option value="{{material}}">{{material}}</option>{% endfor %}<option value="__custom__">Anderes Material …</option></select><input name="material_custom" placeholder="Materialbezeichnung eingeben" aria-label="Anderes Material" hidden>
+{% elif name=='diameter_mm' %}<select name="diameter_mm"><option value="">Nicht hinterlegt</option>{% for diameter in diameters %}<option value="{{diameter}}">{{diameter}} mm</option>{% endfor %}</select>
+{% elif name=='color_json' %}<div class="color-field"><input type="color" value="#888888" data-color-picker aria-label="Farbe auswählen" oninput="this.closest('form').elements.namedItem('color_json').value=this.value.slice(1)"><input name="color_json" placeholder="Optionaler RGB-Farbwert" pattern="#?[0-9a-fA-F]{6}" aria-label="RGB-Farbwert" oninput="syncColor(this.form)"></div><small>Farbe auswählen oder den Farbwert eingeben.</small>
+{% elif name=='notes' %}<textarea name="notes" rows="2" placeholder="Optional"></textarea>
+{% elif name.endswith(('_g','_cm3')) %}<input type="number" min="0" step="any" name="{{name}}" placeholder="Nicht hinterlegt">
+{% else %}<input name="{{name}}" {% if name=='name' %}required{% endif %} placeholder="{{'z. B. PLA Basic' if kind=='filaments' and name=='name' else ('z. B. Regal links, Fach oben' if kind=='locations' and name=='name' else 'Optional' if name!='name' else '')}}">
+{% endif %}</label>
+{% endmacro %}
+<div class="page-heading"><div><div class="eyebrow">Dein Filamentlager</div><h1>Filamente & Spulen</h1><p>Finde die richtige Spule. Verwalte Produkte, Farben und Lagerorte.</p></div><div class="actions">{% if internal %}<button onclick="newRow('spools')">+ Spule hinzufügen</button>{% endif %}<details><summary class="button quiet">Exportieren</summary><div class="actions" style="margin-top:10px"><a class="button secondary" href="/inventory/export/products">Filamentprodukte</a><a class="button secondary" href="/inventory/export">Gesamtes Inventar</a></div></details></div></div>
+{% if not internal %}<div class="notice">Importvorschau · Die interne Bestandsverwaltung ist noch nicht aktiviert.</div>{% endif %}
+
+<section class="panel"><div class="toolbar"><label>Spule suchen<input id="search" placeholder="Produkt, Farbe, Hersteller oder Lagerort …" oninput="filterSpools()"></label><label>Material<select id="material-filter" onchange="filterSpools()"><option value="">Alle Materialien</option>{% for material in spool_views|map(attribute='material')|unique|sort %}<option>{{material}}</option>{% endfor %}</select></label><label>Hersteller<select id="vendor-filter" onchange="filterSpools()"><option value="">Alle Hersteller</option>{% for vendor in spool_views|map(attribute='vendor')|unique|sort %}<option>{{vendor}}</option>{% endfor %}</select></label><label>Status<select id="archive-filter" onchange="filterSpools()"><option value="0">Im Bestand</option><option value="1">Archiviert</option><option value="">Alle Spulen</option></select></label></div><p id="result-count" class="muted small" aria-live="polite"></p><div id="spool-cards" class="spool-grid">
+{% for spool in spool_views %}<article class="spool-card" data-material="{{spool.material}}" data-vendor="{{spool.vendor}}" data-archived="{{spool.archived}}" data-search="{{spool.search}}" {% if spool.archived %}hidden{% endif %}><div class="card-top"><span class="swatch-large" style="background:{{spool.color}}" aria-label="{{spool.color_name or 'Filamentfarbe'}}"></span><span class="badge {{'' if spool.archived else 'good'}}">{{'Archiviert' if spool.archived else 'Im Bestand'}}</span></div><h3>{{spool.material}}{% if spool.subtype %} · {{spool.subtype}}{% endif %}</h3><div>{{spool.color_name or spool.product_name}}</div><div class="muted small">{{spool.vendor}}{% if spool.color_name %} · {{spool.product_name}}{% endif %}</div><div class="weight{% if spool.current_weight_g is none %} unknown{% endif %}">{{spool.weight_label}}</div>{% if spool.current_weight_g is not none and spool.initial_weight_g and spool.initial_weight_g>0 %}<progress max="{{spool.initial_weight_g}}" value="{{spool.current_weight_g}}" aria-label="Restgewicht"></progress>{% endif %}<p class="location">{{spool.location}}{% if spool.batch %} · Charge {{spool.batch}}{% endif %}</p>{% if internal %}<div class="actions"><button class="secondary" onclick="editRow('spools',{{spool.id}})">Bearbeiten</button><button class="quiet" onclick="correctSpool({{spool.id}})">Bestand korrigieren</button></div>{% endif %}</article>{% endfor %}</div><p id="empty-state" class="empty" hidden>Keine passenden Spulen. Passe die Filter an oder füge eine Spule hinzu.</p></section>
+<section class="panel"><div class="section-heading"><div><h2>Inventar verwalten</h2><p>Ein Filamentprodukt beschreibt das Material. Jede Rolle wird als eigene Spule geführt.</p></div></div><div class="subtabs" id="inventory-tabs" role="tablist" aria-label="Inventarbereiche">{% for kind in kinds %}<button type="button" role="tab" id="tab-{{kind}}" aria-controls="panel-{{kind}}" aria-selected="{{'true' if loop.first else 'false'}}" tabindex="{{0 if loop.first else -1}}" onclick="setTab('{{kind}}')">{{titles[kind]}} <span class="count">{{data[kind]|length}}</span></button>{% endfor %}</div>
+{% for kind in kinds %}<div id="panel-{{kind}}" class="tab-panel" role="tabpanel" aria-labelledby="tab-{{kind}}" {% if not loop.first %}hidden{% endif %}><div class="section-heading"><h3>{{titles[kind]}}</h3>{% if internal %}<button class="secondary" onclick="newRow('{{kind}}')">+ {{singular[kind]}} hinzufügen</button>{% endif %}</div>{% if saved_kind==kind %}<div class="notice success" role="status">{{singular[kind]}} gespeichert.</div>{% endif %}<div class="scroll"><table class="inventory-table"><thead><tr>{% for key,title in columns[kind] %}<th>{{title}}</th>{% endfor %}{% if internal %}<th>Aktionen</th>{% endif %}</tr></thead><tbody>{% for row in data[kind] %}<tr>{% for key,title in columns[kind] %}<td data-label="{{title}}"><span>{% if kind=='filaments' and key=='color_name' %}<span class="swatch" style="background:{{product_colors[row.id]}}" aria-hidden="true"></span>{% endif %}{{display(kind,row,key)}}</span></td>{% endfor %}{% if internal %}<td class="row-actions"><button class="table-action" onclick="editRow('{{kind}}',{{row.id}})">Bearbeiten</button>{% if kind=='spools' %} <button class="table-action" onclick="correctSpool({{row.id}})">Bestand korrigieren</button>{% endif %}</td>{% endif %}</tr>{% else %}<tr><td colspan="{{columns[kind]|length+1}}" class="muted">Hier gibt es noch keine Einträge.{% if internal %} Lege über „Hinzufügen“ den ersten an.{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% if internal %}<div class="editor" id="editor-{{kind}}" hidden><h3 id="editor-title-{{kind}}">{{singular[kind]}} hinzufügen</h3><form id="form-{{kind}}" method="post" action="/inventory/{{kind}}/save"><input type="hidden" name="csrf_token" value="{{token}}"><input type="hidden" name="id">{% if kind=='filaments' %}<input type="hidden" name="catalog_id"><div class="catalog-lookup" data-new-only><h3>Mit Vorlage aus dem Katalog starten</h3><p class="field-help">Optional: Hersteller, Material oder Produkt in SpoolmanDB suchen. Du kannst alle Angaben anschließend anpassen.</p><div class="catalog-search"><input id="catalog-query" placeholder="z. B. Bambu PLA Jade White" aria-label="Öffentlichen Filamentkatalog durchsuchen" onkeydown="if(event.key==='Enter'){event.preventDefault();searchCatalog()}"><button type="button" class="secondary" id="catalog-search-button" onclick="searchCatalog()">Katalog durchsuchen</button></div><p id="catalog-status" class="device-status" role="status"></p><div id="catalog-results" class="catalog-results"></div></div>{% endif %}<div class="form-grid">{% for name in basic[kind] %}{{field(kind,name)}}{% endfor %}{% if kind=='spools' %}<label data-new-only>Startgewicht des Filaments (g)<input type="number" name="initial_weight_g" min="0" step="any" placeholder="z. B. 1000"><small>Nur das Filament, ohne Leergewicht. Leer lassen, wenn unbekannt.</small></label>{% endif %}</div>{% if kind=='spools' %}<p class="field-help" style="margin-top:15px">Das passende Produkt fehlt? <button type="button" class="link-button" onclick="newRow('filaments')">Filamentprodukt anlegen</button></p>{% endif %}{% if advanced[kind] %}<details><summary>Weitere Angaben (optional)</summary><div class="form-grid">{% for name in advanced[kind] %}{{field(kind,name)}}{% endfor %}</div></details>{% endif %}<div class="form-actions"><button>{{singular[kind]}} speichern</button><button type="button" class="quiet" onclick="closeEditor('{{kind}}')">Abbrechen</button></div></form></div>{% endif %}</div>{% endfor %}</section>
+{% if internal %}<section class="panel" id="adjust-stock"><div class="section-heading"><div><h2>Bestand korrigieren</h2><p>Wähle eine Spule aus und erfasse, wie viel Filament dazugekommen oder weggefallen ist.</p></div></div>{% if adjusted %}<div class="notice success" role="status">Bestandskorrektur gespeichert.</div>{% endif %}<form id="adjust-form" action="/inventory/adjust" method="post" oninput="previewAdjustment()" onchange="previewAdjustment()"><input type="hidden" name="csrf_token" value="{{token}}"><input type="hidden" name="operation_key" value="{{operation}}"><label>Welche Spule möchtest du korrigieren?<select name="spool_id" required><option value="">Spule auswählen …</option>{% for archived,title in [(0,'Im Bestand'),(1,'Archiviert')] %}<optgroup label="{{title}}">{% for spool in spool_views if spool.archived==archived %}<option value="{{spool.id}}" {% if spool.id==selected_spool %}selected{% endif %}>{{spool.label}}</option>{% endfor %}</optgroup>{% endfor %}</select></label><div class="summary-box" id="adjust-preview" role="status">Wähle eine Spule, um ihren aktuellen Restbestand zu sehen.</div><div class="form-grid"><label>Was möchtest du ändern?<select name="direction"><option value="remove">Filament abziehen</option><option value="add">Filament hinzufügen</option></select></label><label>Menge (g)<input name="delta_grams" type="number" min="0.01" step="any" placeholder="z. B. 25" required></label><label>Grund<select name="note" required><option value="">Grund auswählen …</option><option>Wiegekorrektur</option><option>Restmenge nachgeprüft</option><option>Materialverlust</option><option>Rückbuchung</option><option>Sonstiger Grund</option></select></label><label>Ergänzung (optional)<input name="note_detail" placeholder="z. B. Reststück entsorgt"></label></div><div class="form-actions"><button id="adjust-submit">Korrektur speichern</button></div><p class="field-help">Ein unbekannter Restbestand bleibt bei einer Mengenänderung unbekannt.</p></form></section>{% endif %}
+<script>
+const inventoryData={{data|tojson}},spoolViews={{spool_views|tojson}},singular={{singular|tojson}};
+const kinds={{kinds|tojson}};
+function setTab(kind,changeHash=true){if(!kinds.includes(kind))return;for(const k of kinds){const selected=k===kind;document.getElementById('panel-'+k).hidden=!selected;const tab=document.getElementById('tab-'+k);tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1}if(changeHash)history.replaceState(null,'','#'+kind)}
+document.getElementById('inventory-tabs').addEventListener('keydown',event=>{const current=kinds.findIndex(k=>document.getElementById('tab-'+k)===event.target);if(current<0)return;let next;if(event.key==='ArrowRight')next=(current+1)%kinds.length;else if(event.key==='ArrowLeft')next=(current+kinds.length-1)%kinds.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=kinds.length-1;else return;event.preventDefault();setTab(kinds[next]);document.getElementById('tab-'+kinds[next]).focus()});
+function customMaterial(select){const input=select.form.elements.namedItem('material_custom');input.hidden=select.value!=='__custom__';input.required=!input.hidden;if(input.hidden)input.value=''}
+function syncColor(form){const value=form.elements.namedItem('color_json')?.value||'';const picker=form.querySelector('[data-color-picker]');if(picker)picker.value=/^#?[a-f0-9]{6}$/i.test(value)?'#'+value.replace('#',''):'#888888'}
+function openEditor(kind,editing){setTab(kind);document.getElementById('editor-'+kind).hidden=false;document.getElementById('editor-title-'+kind).textContent=singular[kind]+(editing?' bearbeiten':' hinzufügen');const form=document.getElementById('form-'+kind);for(const item of form.querySelectorAll('[data-new-only]')){item.hidden=editing;for(const input of item.querySelectorAll('input'))input.disabled=editing}form.scrollIntoView({behavior:'smooth',block:'center'});form.querySelector('select,input:not([type=hidden])')?.focus({preventScroll:true})}
+function editRow(kind,id){const form=document.getElementById('form-'+kind);form.reset();if(kind==='filaments')clearCatalog();const row=inventoryData[kind].find(r=>r.id===id);for(const [key,value] of Object.entries(row)){const input=form.elements.namedItem(key);if(!input)continue;let display=value??'';if(key==='color_json'&&value){try{display=JSON.parse(value)}catch{display=''}}if(key==='diameter_mm'&&value!=null)display=String(Number(value));input.value=display}if(kind==='filaments'){customMaterial(form.elements.namedItem('material'));syncColor(form)}openEditor(kind,true)}
+function newRow(kind){const form=document.getElementById('form-'+kind);form.reset();if(kind==='filaments')clearCatalog();form.elements.namedItem('id').value='';if(kind==='filaments'){customMaterial(form.elements.namedItem('material'));syncColor(form)}openEditor(kind,false)}
+function closeEditor(kind){document.getElementById('editor-'+kind).hidden=true;document.getElementById('tab-'+kind).focus()}
+function correctSpool(id){const form=document.getElementById('adjust-form');form.elements.namedItem('spool_id').value=String(id);previewAdjustment();document.getElementById('adjust-stock').scrollIntoView({behavior:'smooth',block:'start'});form.elements.namedItem('delta_grams').focus({preventScroll:true})}
+const grams=value=>new Intl.NumberFormat('de-DE',{maximumFractionDigits:2}).format(value)+' g';
+function previewAdjustment(){const form=document.getElementById('adjust-form');if(!form)return;const spool=spoolViews.find(s=>String(s.id)===form.elements.namedItem('spool_id').value);const preview=document.getElementById('adjust-preview'),button=document.getElementById('adjust-submit');button.disabled=false;if(!spool){preview.textContent='Wähle eine Spule, um ihren aktuellen Restbestand zu sehen.';return}const amount=Number(form.elements.namedItem('delta_grams').value);if(spool.current_weight_g==null){preview.textContent=spool.label+' · Der Restbestand bleibt unbekannt.';return}const delta=form.elements.namedItem('direction').value==='add'?amount:-amount;const after=spool.current_weight_g+delta;preview.textContent=spool.label+(amount>0?' → Neuer Restbestand: '+grams(after):'');if(amount>0&&after<0){preview.textContent='Diese Menge übersteigt den Restbestand von '+grams(spool.current_weight_g)+'.';button.disabled=true}}
+let catalogRequest=null,catalogResults=[];
+function clearCatalog(){const form=document.getElementById('form-filaments');form.elements.namedItem('catalog_id').value='';form.querySelectorAll('option[data-catalog-new]').forEach(o=>o.remove());document.getElementById('catalog-status').textContent='';document.getElementById('catalog-results').replaceChildren();catalogResults=[];if(catalogRequest)catalogRequest.abort()}
+async function searchCatalog(){const query=document.getElementById('catalog-query').value.trim(),status=document.getElementById('catalog-status'),results=document.getElementById('catalog-results'),button=document.getElementById('catalog-search-button');if(query.length<2){status.textContent='Bitte mindestens zwei Zeichen eingeben.';return}if(catalogRequest)catalogRequest.abort();const controller=new AbortController();catalogRequest=controller;button.disabled=true;status.textContent='Öffentlicher Katalog wird durchsucht …';results.replaceChildren();try{const response=await fetch('/api/filament-catalog?q='+encodeURIComponent(query),{signal:controller.signal});const data=await response.json();if(!response.ok)throw Error(data.error||'Katalog nicht erreichbar.');catalogResults=data.results;status.textContent=data.total+' Treffer'+(data.total>data.results.length?' · Bitte Suche eingrenzen.':'')+(data.stale?' · Gespeicherter Katalogstand.':'');for(const [index,item] of data.results.entries()){const choice=document.createElement('button');choice.type='button';choice.className='catalog-choice';const title=document.createElement('strong');title.textContent=item.manufacturer+' · '+item.name;const detail=document.createElement('span');detail.textContent=[item.material,item.weight!=null?grams(item.weight):'',item.diameter!=null?item.diameter+' mm':''].filter(Boolean).join(' · ');choice.append(title,detail);choice.onclick=()=>applyCatalog(index);results.append(choice)}}catch(error){if(error.name!=='AbortError')status.textContent=error.message}finally{if(catalogRequest===controller){button.disabled=false;catalogRequest=null}}}
+function chooseOption(select,value,label){const text=String(value??'');if(text&&![...select.options].some(o=>o.value===text)){const option=document.createElement('option');option.value=text;option.textContent=label||text;select.append(option)}select.value=text}
+function applyCatalog(index){const item=catalogResults[index],form=document.getElementById('form-filaments');if(!item)return;form.elements.namedItem('catalog_id').value=item.id;form.elements.namedItem('name').value=item.name||'';chooseOption(form.elements.namedItem('material'),item.material);customMaterial(form.elements.namedItem('material'));form.elements.namedItem('color_name').value=item.color_name||'';form.elements.namedItem('color_json').value=/^[a-f0-9]{6,8}$/i.test(item.color_hex||'')?item.color_hex.slice(0,6):'';form.elements.namedItem('net_weight_g').value=item.weight??'';form.elements.namedItem('density_g_cm3').value=item.density??'';chooseOption(form.elements.namedItem('diameter_mm'),item.diameter,item.diameter+' mm');const vendor=inventoryData.vendors.find(v=>v.name.trim().toLocaleLowerCase()===item.manufacturer.trim().toLocaleLowerCase()),select=form.elements.namedItem('vendor_id');select.querySelectorAll('option[data-catalog-new]').forEach(o=>o.remove());if(vendor)select.value=String(vendor.id);else{const option=document.createElement('option');option.value='__catalog__';option.textContent=item.manufacturer+' (wird beim Speichern angelegt)';option.dataset.catalogNew='1';select.append(option);select.value=option.value}syncColor(form);document.getElementById('catalog-status').textContent='Vorlage übernommen. Prüfe die Angaben und speichere das Produkt.';document.getElementById('catalog-results').replaceChildren();form.elements.namedItem('name').focus()}
+function filterSpools(){let count=0;const query=document.getElementById('search').value.toLocaleLowerCase().replaceAll('ß','ss');for(const card of document.getElementById('spool-cards').children){card.hidden=!(card.dataset.search.includes(query)&&['material','vendor','archive'].every(key=>{const value=document.getElementById(key+'-filter').value;return !value||card.dataset[key==='archive'?'archived':key]===value}));if(!card.hidden)count++}document.getElementById('result-count').textContent=count===1?'1 Spule gefunden':count+' Spulen gefunden';document.getElementById('empty-state').hidden=count>0}filterSpools();setTab(location.hash.slice(1),false);previewAdjustment();const savedKind=new URLSearchParams(location.search).get('saved');if(kinds.includes(savedKind))document.getElementById('panel-'+savedKind).scrollIntoView({block:'start'});
+</script>
+'''

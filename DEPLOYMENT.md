@@ -1,9 +1,11 @@
-# Betriebsstand
+# Deployment und Prüfung
 
-## 2026-11-07 — v2.4.0
+Der Quellstand enthält native Inventarverwaltung, Kamera und Lichtsteuerung sowie Tapo-Anbindung. Individuelle Betriebsprotokolle, Bestandszahlen, Sicherungsnamen und Imagekennungen werden nicht veröffentlicht.
 
-Nach ausdrücklicher Freigabe wurde der QNAP-Betrieb auf `DRY_RUN=false` umgestellt. Automatische Zuordnung sowie echte Abbuchungen für neue Druckaufträge und manuelle Buchungen sind aktiv. Schätzungen für Druckabbrüche und gewichtsbasierte Spulenaufteilungen werden entsprechend der freigegebenen Verarbeitungslogik ebenfalls gebucht und im Journal gekennzeichnet.
+Für neue Installationen mit der Beispieldatei starten und ausschließlich lokale Zugangsdaten verwenden. Der Standard bleibt Spoolman mit aktivierter Simulation. Interne Inventarverwaltung erfordert eine kontrollierte Offline-Migration; keine bestehende Datenbank durch eine leere ersetzen.
 
-Prüfung nach dem Neustart: Anwendung gesund, Spoolman verbunden, automatische Zuordnung aktiv. Das bestehende Journal wurde mit einer vor der Umschaltung gesicherten Ausgangslage verglichen und blieb unverändert. Historische Dry-Runs wurden nicht nachgebucht.
+- [Bedienungsanleitung](docs/user-guide.md)
+- [Migration, Sicherungen und Wiederherstellung](docs/plus-operations.md)
+- [Einrichtung und Deployment-Werkzeug](README.md#einrichtung)
 
-Die private Konfiguration wurde vor der Umschaltung auf dem NAS gesichert. Zugangsdaten, konkrete Netzadressen, Datenbanken und Sicherungen werden nicht in Git gespeichert. `.env.example` behält den sicheren Startwert `DRY_RUN=true` für neue Installationen.
+Vor jedem Update laufende Drucke und offene Buchungen ausschließen, konsistente private Sicherungen erstellen und nach dem Neustart Healthcheck, Journal und Bestände prüfen. Ein Hardwaretest der eigenen Installation bleibt erforderlich. Automatisierte Tests verwenden temporäre Daten und simulierte Geräte.
