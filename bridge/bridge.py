@@ -1258,7 +1258,7 @@ def storage_idle():
         return not db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING')").fetchone()
 
 
-printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log)
+printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP)
 
 
 register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,

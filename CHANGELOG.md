@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-16 — Persistente Modellminiaturen im Druckerspeicher
+
+- Vorschaubilder werden unabhängig vom Inventar im NAS-Datenverzeichnis zwischengespeichert und neben dem Vorschau-Button angezeigt. Bereits vorhandene Bilder benötigen beim Öffnen keinen neuen FTPS-Transfer.
+- Optionales serielles Nachladen für sichtbare 3MF-Zeilen; standardmäßig aus. Neue Downloads nur im bestätigten Leerlauf; fehlender Leerlauf oder Verbindungsprobleme pausieren die Automatik.
+- Cache-Gültigkeit 30 Tage, maximal 200 Bilder / 64 MiB Bilddaten mit Verdrängung. Dateipfad, Größe, Datum und Druckeridentität trennen Einträge. Erfolgreiches Löschen einer Druckdatei entfernt deren Bildcache. Eigene bestätigte Aktion zum Leeren ausschließlich des App-Bildcaches.
+- 179 Tests lokal und im NAS-Container bestanden, einschließlich Persistenz, Grenzen, Ablauf und Cachetreffer ohne Druckerverbindung. Browserprüfung für Inline-Miniaturen, sichtbares Nachladen, Wiederverwendung, getrenntes Leeren und Mobilansicht. Dokumentation unterscheidet App-Bildcache von Druckdateien im Drucker-Verzeichnis /cache; keine automatische Druckerbereinigung.
+
 ## 2026-11-16 — Eigener Reiter Druckerspeicher
 
 - Lokale FTPS-Dateiverwaltung für Hauptverzeichnis, Druckcache und Modelle: Suche, Größe, Datum, Sortierung und explizite Mehrfachauswahl für reguläre Druckdateien.

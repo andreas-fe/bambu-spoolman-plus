@@ -14,7 +14,7 @@ Nach Deployment `/health`, tatsächlichen Backend-/Simulationsmodus, Inventarsei
 
 ## Automatisierte Prüfung
 
-**177 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
+**179 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
 
 Temporäre Testdaten auf NAS möglichst im Arbeitsspeicher (`--tmpfs /tmp:rw,size=256m`) halten. Das vermeidet langsame SQLite-Schreibtests im Container-Layer. Niemals produktive Datenverzeichnisse in einen Testlauf mounten.
 
@@ -47,3 +47,7 @@ Die Profilliste wurde auf dem realen A1 gelesen. Während eines laufenden Drucks
 FTPS-Dateiliste, Pfadgrenzen, Auswahlprüfung, Bestätigung und Löschsperren sind automatisiert geprüft. Vorschau nutzt gespeicherte Bilder aus begrenzten 3MF-Archiven. Die Löschbefehle sind mit einem simulierten Server getestet; produktive Dateien wurden für die Prüfung nicht gelöscht. Eine echte Löschprüfung ist separat mit einer ausdrücklich ausgewählten entbehrlichen Datei vorzunehmen.
 
 Am Referenz-A1 wurden Hauptverzeichnis und Druckcache erfolgreich gelesen; ein kleines eingebettetes PNG-Vorschaubild aus einer vorhandenen 3MF wurde verifiziert. `/model` ist dort nicht verfügbar. Es wurden keine echten Dateien gelöscht oder hochgeladen.
+
+Der entbehrliche Vorschaubildcache ist eine separate private SQLite-Datei im persistenten Datenverzeichnis. Er ist nicht Bestandteil des Inventar-JSON-Exports. Cachetests prüfen Persistenz, Druckertrennung, Größen-/Anzahlgrenzen, Verdrängung, Ablauf, veränderte Dateiangaben und Wiederverwendung ohne erneuten Transfer.
+
+Am Referenz-A1 wurden Vorschau, unmittelbar folgender Cachetreffer und die Inline-Bildroute mit identischen Bilddaten geprüft. Der zweite Vorschauaufruf bestätigte `X-Preview-Cache: hit`. Dabei wurden keine Druckerdateien verändert oder gelöscht.
