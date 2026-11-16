@@ -1332,3 +1332,54 @@ def test_profile_change_invalidates_review_and_custom_index_is_sent(bridge,monke
     assert b.telemetry.wait_for_calibration.call_args.args[3:]==(7,.03)
     commands=[json.loads(x.args[1]).get('print',{}) for x in mqtt.publish.call_args_list]
     assert any(v.get('command')=='extrusion_cali_sel' and v['cali_idx']==7 for v in commands)
+
+
+def seed_paged_journal(b):
+    sid=enable_internal(b)
+    with b.store.connection() as db:
+        for n in range(25):
+            stamp='2026-11-16T10:00:00+00:00'  # Equal timestamps must not lose mixed rows.
+            if n%2:
+                db.execute("INSERT INTO inventory_movements(operation_key,spool_id,movement_type,delta_g,before_weight_g,after_weight_g,note,created_at) VALUES (?,?,'adjustment',1,100,101,'test',?)",(f'page-{n}',sid,stamp))
+            else:
+                job=f'page-{n}'
+                db.execute("INSERT INTO jobs(id,kind,created_at,updated_at,filename,subtask_name,state) VALUES (?,'MANUAL',?,?,'','Test','DONE')",(job,stamp,stamp))
+                db.execute("INSERT INTO deductions(job_id,source_key,spool_id,grams,status,created_at,updated_at) VALUES (?,'test',?,1,'DONE',?,?)",(job,sid,stamp,stamp))
+    return sid
+
+
+def test_journal_pagination_mixes_entries_and_preserves_all_history(bridge):
+    b=bridge;seed_paged_journal(b);c=b.app.test_client()
+    page=c.get('/api/journal').json;all_rows=[];sizes=[]
+    while True:
+        sizes.append(len(page['entries']));all_rows.extend(page['entries'])
+        if not page['has_more']:break
+        page=c.get('/api/journal',query_string={'before':page['next_cursor']}).json
+    assert sizes==[10,10,5]
+    assert len({str(r['id']) for r in all_rows})==25
+    assert any(r.get('entry_type')=='adjustment' for r in all_rows)
+    assert [tuple(r['journal_key']) for r in all_rows]==sorted((tuple(r['journal_key']) for r in all_rows),reverse=True)
+    assert len(b.store.list_deductions(100))==25
+    assert len(c.get('/api/status').json['deductions'])==10
+    html=c.get('/').text
+    assert 'id="journal-details" open' in html and '10 weitere Einträge laden' in html
+    assert 'id="journal-latest"' in html
+
+
+def test_journal_cursor_survives_new_entries_and_bad_tokens_are_rejected(bridge):
+    b=bridge;sid=seed_paged_journal(b);c=b.app.test_client()
+    first=c.get('/api/journal').json
+    baseline=b.store.list_deductions(100)
+    with b.store.connection() as db:
+        db.execute("INSERT INTO inventory_movements(operation_key,spool_id,movement_type,delta_g,note,created_at) VALUES ('new',?,'adjustment',1,'new','2026-11-17T00:00:00+00:00')",(sid,))
+    second=c.get('/api/journal',query_string={'before':first['next_cursor']}).json
+    assert [r['id'] for r in second['entries']]==[r['id'] for r in baseline[10:20]]
+    for token in ['invalid','x'*513]:assert c.get('/api/journal',query_string={'before':token}).status_code==400
+    from itsdangerous import URLSafeTimedSerializer
+    invalid=URLSafeTimedSerializer(b.app.secret_key,salt='journal-cursor-v1').dumps(['date','deduction',True])
+    assert c.get('/api/journal',query_string={'before':invalid}).status_code==400
+
+
+def test_empty_journal_has_no_next_page(bridge):
+    data=bridge.app.test_client().get('/api/journal').json
+    assert data==dict(entries=[],has_more=False,next_cursor=None)

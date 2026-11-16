@@ -1,5 +1,13 @@
 # Änderungen
 
+## 2026-11-16 — Kompaktes, einklappbares Buchungsjournal
+
+- Journal startet mit zehn Einträgen; „10 weitere Einträge laden“ ergänzt die nächste Seite bis zum Ende. Die gespeicherte Historie wird weder gelöscht noch gekürzt.
+- Verbrauch und manuelle Korrekturen werden gemeinsam datenbankseitig paginiert. Signierte Positionscursor, eindeutige Sortierung auch bei gleichen Zeitstempeln und passende Zeitindizes vermeiden übersprungene oder doppelte Einträge beim Nachladen.
+- Journal lässt sich wie Diagnose & Live-Logs einklappen; der Zustand wird im Browser gespeichert. Bereits nachgeladene Historie bleibt bei Live-Updates stehen, neue Einträge sind über einen ausdrücklichen Rücksprung erreichbar. Fehler und doppelte Klicks verändern geladene Seiten nicht.
+- Statusantworten und initiale Ansicht liefern nur die neueste Zehnerseite. Tests für gemischte Historie, identische Zeitstempel, neue Buchungen während Pagination, ungültige Cursor und leere Historie ergänzt. 170 Tests lokal und im NAS-Container bestanden; Browserprüfung für Nachladen, Fehlerwiederholung, Einklappen und mobile Darstellung erfolgreich.
+- Dokumentation präzisiert Flusskontrolle: Eine beobachtete dynamische Kalibrierungsphase kann die Ausführung belegen, fehlende Meldung jedoch kein sicheres Nein. Aktuell keine dauerhafte pro-Auftrag-Erkennung und keine automatische Änderung des manuellen 2-g-Zuschlags.
+
 ## 2026-11-16 — Dynamische Drucksteuerung und gerichteter AMS-Abgleich
 
 - Neuer AMS-Unterbereich: Drucker mit Farbe, Material, Profil und K-Faktor links; Bestandsspule und gewünschte Drucksteuerung rechts; explizite Übertragungsrichtungen in der Mitte. Mobil steht die Auswahl vor der Aktion. Der Filter für passende Rollen ist dauerhaft sichtbar.

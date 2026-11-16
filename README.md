@@ -13,7 +13,7 @@ Lokale Docker-Anwendung für Bambu Lab A1/A1 mini und AMS Lite: Filamentbestand 
 - **Integriertes Inventar:** Hersteller, Produkte, physische Rollen und Lagerorte; Suchfilter, sortierbare Tabellen, getrennte Leergewichte und freie Zusatzangaben. Hersteller direkt im Produktdialog anlegen.
 - **Wiegekorrektur:** Gesamtgewicht eingeben; die App zieht das bekannte Leerspulengewicht ab und setzt den Restbestand. Auch unbekannte Bestände können so erfasst werden.
 - **Katalogvorlagen:** Optionale SpoolmanDB-Suche für neue Produkte. Vorlagen prüfen und übernehmen; keine automatische Änderung bestehender Produkte oder Slicer-Profile.
-- **Verbrauch und Journal:** Slicer-Grammwerte der gedruckten Platte, eingefrorene Bestands-/Zuordnungssnapshots, Abbruchschätzungen, manuelle Korrekturen und nachvollziehbare Wiegedaten mit Datum und Uhrzeit.
+- **Verbrauch und Journal:** Slicer-Grammwerte der gedruckten Platte, eingefrorene Bestands-/Zuordnungssnapshots, Abbruchschätzungen, manuelle Korrekturen und nachvollziehbare Wiegedaten mit Datum und Uhrzeit. Einklappbares Journal mit zehn Einträgen und schrittweisem Nachladen.
 - **Flusskontrolle:** Optional 2 g Zusatzverbrauch pro positiver Slicer-Filamentposition, einmalig je Auftrag und als Schätzung gekennzeichnet. Die Option aktiviert oder erkennt keine Druckerkalibrierung.
 - **Kamera und Licht:** Livebild bei Bedarf, Lichtschalter oberhalb der Bildfläche und neue Gerätezustandsbestätigung vor Erfolgsmeldung.
 - **Tapo P110:** Ein-/Ausschalten, Live-Leistung, Tages-/Monatsenergie und Laufzeit. Ausschalten verlangt bestätigten frischen Druckerleerlauf; eingeschaltetes Licht blockiert nicht.
@@ -86,7 +86,7 @@ Nach FINISH werden die Grammwerte der ausgewählten Platte gebucht. Bei Abbruch 
 
 ## Validierung und bekannte Grenzen
 
-Stand 16. November 2026: **167 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
+Stand 16. November 2026: **170 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
 
 Am Referenzsystem wurden Licht, manuelles Schalten und ein tatsächlicher AMS-Farbwechsel im Leerlauf geprüft; ursprüngliche Farbe und Bestandsbindung wurden danach wiederhergestellt. Ein echter Farbwechsel während eines laufenden Drucks nach Modusumstellung sowie ein vollständiger automatischer Abschaltzyklus der neuen Funktion sind noch nicht hardwarebestätigt. Das ist kein Freigabenachweis für andere Modelle oder Firmwarestände.
 

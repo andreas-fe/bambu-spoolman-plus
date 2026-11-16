@@ -158,7 +158,9 @@ Entfernte Rollen können nicht erneut ausgewählt, bearbeitet oder reaktiviert w
 
 ![Journal mit Datum, Abbruchteilmenge, Flusszuschlag und Wiegekorrektur – Beispieldaten](assets/current/journal.png)
 
-Das Journal zeigt Datum und Uhrzeit, Auftrag, Schacht, Rolle, Menge, Status und Details. Erfolgreiche interne Buchungen aktualisieren Bestand und Verbrauch gemeinsam in einer SQLite-Transaktion. Wiederholtes FINISH oder eine Wiederaufnahme erzeugen keine zweite Buchung derselben Position.
+Das Journal zeigt zunächst die **letzten zehn Einträge** mit Datum und Uhrzeit, Auftrag, Schacht, Rolle, Menge, Status und Details. „10 weitere Einträge laden“ ergänzt jeweils die nächste Seite. Wenn keine älteren Einträge übrig sind, verschwindet die Schaltfläche. Die vollständige Historie bleibt in der Datenbank gespeichert; es gibt keine automatische Löschung alter Buchungen.
+
+Über die Überschrift lässt sich der gesamte Bereich wie die Diagnose einklappen. Der Browser merkt sich diesen Zustand lokal. Beim Blättern bleiben bereits geladene ältere Einträge stehen. Neue Buchungen werden dann über „Aktuelle Einträge anzeigen“ erreichbar; diese Aktion kehrt zur neuesten Zehneransicht zurück. Fehlgeschlagenes Nachladen kann wiederholt werden, ohne die vorhandenen Einträge zu verlieren. Erfolgreiche interne Buchungen aktualisieren Bestand und Verbrauch gemeinsam in einer SQLite-Transaktion. Wiederholtes FINISH oder eine Wiederaufnahme erzeugen keine zweite Buchung derselben Position.
 
 Bei Abbruch lautet der Hinweis „Teilmenge bis Abbruch gebucht“. Die Grundlage bleibt Slicer-Menge × letzter bekannter Fortschritt. Das ist insbesondere bei Mehrmaterial keine genaue Extrusionsmessung. Bei null geschätztem Verbrauch entsteht keine positive Buchung. Rechnerische Aufteilungen auf Rest- oder Reservespulen werden ebenfalls gekennzeichnet.
 
@@ -241,7 +243,7 @@ Die Option ausschalten, wenn keine Flusskalibrierung läuft oder deren Verbrauch
 
 ### Automatische Erkennung der Kalibrierung
 
-Die dokumentierte Startanfrage kennt `flow_cali`. Das ist keine hier nachgewiesene, dauerhaft verfügbare Statusbestätigung für einen aus Bambu Studio gestarteten A1-Auftrag. Die App erkennt diesen Schalter derzeit **nicht automatisch**. Bei einem künftig von der App selbst ausgelösten Start könnte die ausdrücklich gewählte Option gespeichert werden. Quelle: [OpenBambuAPI – project_file](https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md#printproject_file).
+Die dokumentierte Startanfrage kennt `flow_cali`. Das ist keine hier nachgewiesene, dauerhaft verfügbare Statusbestätigung für einen aus Bambu Studio gestarteten A1-Auftrag. Die App erkennt diesen Startschalter derzeit **nicht automatisch**. Bambu Studio ordnet außerdem die Statusphase 8 der laufenden dynamischen Flusskalibrierung zu. Falls der A1 diese Phase während der Beobachtung meldet, wäre das ein positiver Nachweis einer ausgeführten Kalibrierung. Das Ausbleiben der Meldung beweist keine deaktivierte Kalibrierung: Die App könnte zu spät verbunden gewesen sein oder die Phase nicht erhalten haben. Die Anwendung speichert einen solchen Nachweis bislang nicht dauerhaft pro Auftrag und leitet daraus keinen automatischen 2-g-Zuschlag ab. Ein eingestelltes K-Profil belegt ebenfalls nicht, dass in diesem Druck neu kalibriert wurde. Quelle zur Phase: [Bambu Studio – Statusphasen](https://github.com/bambulab/BambuStudio/blob/master/src/slic3r/GUI/DeviceManager.cpp). Bei einem künftig von der App selbst ausgelösten Start könnte die ausdrücklich gewählte Option gespeichert werden. Quelle: [OpenBambuAPI – project_file](https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md#printproject_file).
 
 ## Fehlersuche und Grenzen
 

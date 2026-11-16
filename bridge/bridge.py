@@ -428,12 +428,34 @@ class Store:
         with self.connection() as con:
             return [dict(r) for r in con.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()]
 
-    def list_deductions(self, limit: int = 30) -> list[dict[str, Any]]:
+    def list_deductions(self, limit: int = 30, before=None) -> list[dict[str, Any]]:
+        # Page the combined journal before loading details: bounded work even
+        # when years of consumption and correction records are retained.
+        limit = max(1,min(int(limit),101))
         with self.connection() as con:
-            rows = [dict(r) for r in con.execute(
-                "SELECT d.*, j.filename, j.subtask_name, j.created_at AS job_created_at, j.mapping_source, j.estimated "
-                ", j.cancelled, j.progress AS job_progress, j.estimate_reason FROM deductions d JOIN jobs j ON j.id=d.job_id ORDER BY d.id DESC LIMIT ?", (limit,)
-            ).fetchall()]
+            con.execute('BEGIN')
+            sql = """SELECT created_at,kind,id FROM (
+                SELECT created_at,'deduction' AS kind,id FROM deductions
+                UNION ALL
+                SELECT created_at,'adjustment' AS kind,id FROM inventory_movements WHERE movement_type='adjustment'
+            )"""
+            params=[]
+            if before is not None:
+                sql+=' WHERE (created_at,kind,id)<(?,?,?)'
+                params.extend(before)
+            sql+=' ORDER BY created_at DESC,kind DESC,id DESC LIMIT ?'
+            keys=con.execute(sql,(*params,limit)).fetchall()
+            ids=[r['id'] for r in keys if r['kind']=='deduction']
+            correction_ids=[r['id'] for r in keys if r['kind']=='adjustment']
+            marks=','.join('?' for _ in ids) or 'NULL'
+            rows=[dict(r) for r in con.execute(
+                "SELECT d.*,j.filename,j.subtask_name,j.created_at AS job_created_at,j.mapping_source,j.estimated,"
+                "j.cancelled,j.progress AS job_progress,j.estimate_reason FROM deductions d JOIN jobs j ON j.id=d.job_id "
+                f"WHERE d.id IN ({marks})",ids).fetchall()]
+            correction_marks=','.join('?' for _ in correction_ids) or 'NULL'
+            corrections=con.execute(f"SELECT * FROM inventory_movements WHERE id IN ({correction_marks})",correction_ids).fetchall()
+        for row in rows:
+            row['journal_key']=[row['created_at'],'deduction',row['id']]
         for row in rows:
             if row['status'] == 'DONE':
                 row['detail'] = re.sub(r'^HTTP 2\d\d(?=;|$)', 'Buchung durch Spoolman bestätigt', row['detail'])
@@ -443,8 +465,6 @@ class Store:
                 row['detail'] = 'Abgebrochener Druck · geschätzte Teilmenge. ' + row['detail']
         # Inventory corrections belong in the visible journal, but never in
         # consumption totals or the deduction worker's executable queue.
-        with self.connection() as con:
-            corrections = con.execute("SELECT * FROM inventory_movements WHERE movement_type='adjustment' ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
         for correction in corrections:
             data=dict(correction);before=data['before_weight_g'];after=data['after_weight_g'];note=data['note'] or ''
             weighed=note.startswith('Wiegekorrektur: ')
@@ -461,11 +481,11 @@ class Store:
                     detail+=' '+note
             elif note:
                 detail+=' '+note
-            rows.append(dict(id='adjustment:'+str(data['id']),entry_type='adjustment',created_at=data['created_at'],job_created_at=data['created_at'],
+            rows.append(dict(journal_key=[data['created_at'],'adjustment',data['id']],id='adjustment:'+str(data['id']),entry_type='adjustment',created_at=data['created_at'],job_created_at=data['created_at'],
                              job_id='adjustment:'+str(data['id']),filename=title,subtask_name=title,tray_id=None,spool_id=data['spool_id'],
                              grams=data['delta_g'],amount_label=(current+' Bestand') if weighed else f"{data['delta_g']:+g} g",
                              status='CORRECTED',status_label='Korrigiert',estimated=0,cancelled=0,detail=detail))
-        return sorted(rows,key=lambda row:(row['created_at'],str(row['id'])),reverse=True)[:limit]
+        return sorted(rows,key=lambda row:tuple(row['journal_key']),reverse=True)
 
     def recoverable_jobs(self) -> list[str]:
         with self.connection() as con:
@@ -482,6 +502,9 @@ class Store:
 
 store = Store(DB_PATH)
 apply_migrations(DB_PATH)
+with inventory_connection(DB_PATH) as db:
+    db.execute('CREATE INDEX IF NOT EXISTS deductions_journal_time_idx ON deductions(created_at DESC,id DESC)')
+    db.execute('CREATE INDEX IF NOT EXISTS movements_journal_time_idx ON inventory_movements(movement_type,created_at DESC,id DESC)')
 inventory_service = InventoryService(DB_PATH)
 with inventory_connection(DB_PATH) as db:
     saved_settings = {r['key']: json.loads(r['value_json']) for r in db.execute("SELECT key,value_json FROM settings WHERE key IN ('dry_run','auto_match_filaments')")}
@@ -1610,8 +1633,9 @@ HTML_TEMPLATE = r"""
   {% else %}<p class="muted">Kein Auftrag mit offener Filamentzuordnung.</p>{% endfor %}
 </section>
 
-<section class="card">
-  <h2>Buchungsjournal (Letzte Positionen)</h2>
+<section class="card" id="journal-panel"><details class="diagnostics" id="journal-details" open>
+  <summary>Buchungsjournal <span class="muted small" id="journal-count">{{deductions|length}} Einträge angezeigt</span></summary>
+  <p class="muted small">Die letzten 10 Einträge. Ältere Buchungen bleiben gespeichert und können schrittweise nachgeladen werden.</p>
   <div style="overflow:auto;">
     <table>
       <thead><tr><th>Datum & Uhrzeit</th><th>Auftrag</th><th>Schacht</th><th>Spule</th><th>Menge</th><th>Status</th><th>Details</th></tr></thead>
@@ -1632,7 +1656,9 @@ HTML_TEMPLATE = r"""
       </tbody>
     </table>
   </div>
-</section>
+  <div class="actions"><button type="button" class="secondary" id="journal-more" onclick="loadMoreJournal()" {% if not journal.has_more %}hidden{% endif %}>10 weitere Einträge laden</button><button type="button" class="secondary" id="journal-latest" onclick="resetJournal()" hidden>Aktuelle Einträge anzeigen</button></div>
+  <p id="journal-message" class="muted small" role="status" aria-live="polite"></p>
+</details></section>
 
 <section class="card"><details class="diagnostics">
   <summary>Diagnose & Live-Logs</summary>
@@ -1658,22 +1684,40 @@ function refreshStatus(){fetch('/api/status').then(r=>r.json()).then(data=>{
  document.getElementById('active').textContent=data.printer.active_slot_label;
  logBox.textContent=data.logs.join('\n');
  if(!userScrolled)logBox.scrollTop=logBox.scrollHeight;
- const tbody=document.getElementById('deductions');tbody.replaceChildren();
- data.deductions.forEach(d=>{
-   const tr=document.createElement('tr');
-   cell(tr,formatDateTime(d.created_at));
-   cell(tr,d.subtask_name||d.filename||d.job_id.slice(0,8));
-   cell(tr,d.tray_id===null?'—':(d.tray_id===254?'Extern':'Slot '+(d.tray_id+1)));
-   cell(tr,d.spool_id?'#'+d.spool_id:'—');
-   cell(tr,d.amount_label||Number(d.grams).toFixed(2)+' g');
-   cell(tr,(d.status_label||d.status)+(d.estimated?' · SCHÄTZUNG':''));
-   cell(tr,d.detail);
-   tbody.appendChild(tr);
- });
+ if(data.journal)updateJournal(data.journal);
 });}
+let journalRows={{deductions|tojson}},journalCursor={{journal.next_cursor|tojson}},journalHasMore={{journal.has_more|tojson}},journalExpanded=false,journalLoading=false,latestJournal={{journal|tojson}};
+function renderJournal(){const tbody=document.getElementById('deductions');tbody.replaceChildren();for(const d of journalRows){const tr=document.createElement('tr');cell(tr,formatDateTime(d.created_at));cell(tr,d.subtask_name||d.filename||d.job_id.slice(0,8));cell(tr,d.tray_id==null?'—':d.tray_id===254?'Extern':'Slot '+(d.tray_id+1));cell(tr,d.spool_id?'#'+d.spool_id:'—');cell(tr,d.amount_label||Number(d.grams).toFixed(2)+' g');cell(tr,(d.status_label||d.status)+(d.estimated?' · SCHÄTZUNG':''));cell(tr,d.detail);tbody.append(tr)}if(!journalRows.length){const tr=document.createElement('tr');cell(tr,'Noch keine Buchungen erfasst.');tr.firstChild.colSpan=7;tbody.append(tr)}document.getElementById('journal-count').textContent=journalRows.length+' Einträge angezeigt';const more=document.getElementById('journal-more');more.hidden=!journalHasMore;more.disabled=journalLoading;more.textContent=journalLoading?'Wird geladen …':'10 weitere Einträge laden'}
+function journalRowID(row){return String(row.id)}
+function updateJournal(data){latestJournal=data;if(!journalExpanded&&!journalLoading){journalRows=data.entries;journalCursor=data.next_cursor;journalHasMore=data.has_more;document.getElementById('journal-latest').hidden=true;renderJournal();return}const latest=new Map(data.entries.map(r=>[journalRowID(r),r]));journalRows=journalRows.map(r=>latest.get(journalRowID(r))||r);const changed=data.entries[0]&&journalRowID(data.entries[0])!==journalRowID(journalRows[0]||{});document.getElementById('journal-latest').hidden=!changed;renderJournal()}
+async function loadMoreJournal(){if(journalLoading||!journalHasMore)return;journalLoading=true;const cursor=journalCursor;renderJournal();const message=document.getElementById('journal-message');message.textContent='';try{const response=await fetch('/api/journal?before='+encodeURIComponent(cursor),{cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.error||'Journal konnte nicht geladen werden.');const ids=new Set(journalRows.map(journalRowID));journalRows.push(...data.entries.filter(r=>!ids.has(journalRowID(r))));journalCursor=data.next_cursor;journalHasMore=data.has_more;journalExpanded=true;message.textContent=data.has_more?'':'Alle verfügbaren Einträge geladen.'}catch(error){message.textContent=error.message+' Bitte erneut versuchen.'}finally{journalLoading=false;renderJournal()}}
+function resetJournal(){if(journalLoading)return;journalExpanded=false;document.getElementById('journal-message').textContent='';document.getElementById('journal-latest').hidden=true;updateJournal(latestJournal)}
+const journalDetails=document.getElementById('journal-details');try{const saved=localStorage.getItem('plus-journal-open');if(saved!==null)journalDetails.open=saved==='true'}catch{}journalDetails.addEventListener('toggle',()=>{try{localStorage.setItem('plus-journal-open',String(journalDetails.open))}catch{}});
 setInterval(refreshStatus,5000);
 </script>
 """
+
+def journal_page(before=None):
+    rows=store.list_deductions(11,before=before)
+    more=len(rows)>10
+    entries=rows[:10]
+    cursor=URLSafeTimedSerializer(app.secret_key,salt='journal-cursor-v1').dumps(entries[-1]['journal_key']) if more and entries else None
+    return dict(entries=entries,has_more=more,next_cursor=cursor)
+
+
+@app.get('/api/journal')
+def journal_api():
+    before=None
+    token=request.args.get('before')
+    if token:
+        try:
+            if len(token)>512:raise ValueError()
+            before=URLSafeTimedSerializer(app.secret_key,salt='journal-cursor-v1').loads(token)
+            if not isinstance(before,list) or len(before)!=3 or not isinstance(before[0],str) or before[1] not in ('deduction','adjustment') or type(before[2]) is not int or before[2]<1:raise ValueError()
+        except (BadSignature,ValueError,TypeError):
+            return jsonify(error='Ungültige Journalposition. Bitte die Seite neu laden.'),400
+    return jsonify(journal_page(before))
+
 
 @app.route("/health")
 def health():
@@ -1682,6 +1726,7 @@ def health():
 @app.route("/")
 def index():
     session.setdefault("csrf_token", secrets.token_urlsafe(32))
+    journal=journal_page()
     return render_ui(
         HTML_TEMPLATE.replace("Spoolman", "Inventar") if INVENTORY_BACKEND == "internal" else HTML_TEMPLATE,
         active='overview', title='Drucker & Verbrauch',
@@ -1696,7 +1741,7 @@ def index():
         mapping_jobs=job_mapping_forms(),
         auto_power=auto_power.status(),active_job_id=store.active_job_id(),
         spools=fetch_spoolman_spools(),
-        deductions=store.list_deductions(30),
+        deductions=journal['entries'],journal=journal,
         logs=list(log_buffer),
         spoolman_url=SPOOLMAN_BROWSER_URL,
         dry_run=DRY_RUN,
@@ -1706,6 +1751,7 @@ def index():
 @app.route("/api/status")
 def status_api():
     with log_lock: logs = list(log_buffer)
+    journal=journal_page()
     return jsonify({
         "printer": printer_status,
         "ams": ams_state,
@@ -1715,7 +1761,8 @@ def status_api():
         "dry_run": DRY_RUN,
         "auto_match_filaments": AUTO_MATCH_FILAMENTS,
         "auto_power": auto_power.status(),
-        "deductions": store.list_deductions(30),
+        "deductions": journal["entries"],
+        "journal": journal,
         "logs": logs,
     })
 
