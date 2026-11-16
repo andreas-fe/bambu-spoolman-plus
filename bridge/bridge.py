@@ -124,7 +124,6 @@ class Store:
     def connection(self):
         conn = sqlite3.connect(self.path, timeout=15)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=15000")
         conn.execute("PRAGMA foreign_keys=ON")
         try:
@@ -138,6 +137,7 @@ class Store:
 
     def _init_db(self) -> None:
         with self.connection() as con:
+            con.execute("PRAGMA journal_mode=WAL")
             con.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -371,7 +371,9 @@ class Store:
             return [dict(row) for row in con.execute('SELECT * FROM deductions WHERE job_id=?', (job_id,))]
 
     def set_job_mapping(self, job_id: str, mapping: list[int]) -> bool:
-        """A user-confirmed mapping applies to one job, never to subsequent prints."""
+        """Confirm selected trays and fill only missing role bindings for this job."""
+        current_slots = load_mapping()
+        current_stock = stock_snapshot(fetch_spoolman_spools())
         with self.connection() as con:
             con.execute('BEGIN IMMEDIATE')
             job = con.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -386,6 +388,20 @@ class Store:
                     slots[slot]=change['after']
                 con.execute('UPDATE jobs SET slot_mapping_json=?,error=?,estimated=1,estimate_reason=? WHERE id=?',(json.dumps(slots),'','Rollenwechsel während Druck: manuell bestätigte Zuordnung; rollenbezogene Teilmengen nicht gemessen.',job_id))
                 con.execute('DELETE FROM runtime WHERE key=?',('ams-job-review:'+job_id,))
+            # A late tray confirmation must also resolve an originally empty
+            # tray-to-role snapshot. Preserve every previously captured role.
+            refreshed = con.execute('SELECT slot_mapping_json FROM jobs WHERE id=?', (job_id,)).fetchone()
+            slots = json.loads(refreshed['slot_mapping_json'] or '{}')
+            stock = json.loads(job['spools_snapshot_json'] or '{}')
+            for tray in mapping:
+                key = 'external' if tray == 254 else str(tray)
+                if tray in (*range(4), 254) and not slots.get(key) and current_slots.get(key):
+                    slots[key] = current_slots[key]
+                    sid = str(slots[key])
+                    if sid not in stock and sid in current_stock:
+                        stock[sid] = current_stock[sid]
+            con.execute('UPDATE jobs SET slot_mapping_json=?,spools_snapshot_json=?,error=? WHERE id=?',
+                        (json.dumps(slots),json.dumps(stock),'',job_id))
             con.execute('DELETE FROM deductions WHERE job_id=?', (job_id,))
             con.execute("UPDATE jobs SET ams_mapping_json=?, ams_mapping2_json=NULL, mapping_source='USER', updated_at=? WHERE id=?",
                         (json.dumps(mapping), self.now(), job_id))
@@ -824,7 +840,7 @@ def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, sto
             color = normalized_color(filament.get('color'))
             material = str(filament.get('material') or '').strip()
             if matched_slots:
-                detail = 'Passender AMS-Slot hat keine Spoolman-Spulenzuordnung.'
+                detail = 'Passender AMS-Slot hat keine Bestandsrolle im Auftrag. Bitte aktuelle Rolle zuordnen und die Auftragszuordnung erneut bestätigen.'
             elif job.get('mapping_source') == 'USER':
                 detail = f'Filament {filament_id} wurde keinem AMS-Slot zugeordnet.'
             elif not color or not material:
@@ -1003,6 +1019,12 @@ def record_ams_changes():
         return
     key = 'ams_fingerprints:' + SERIAL
     with inventory_connection(DB_PATH) as db:
+        row = db.execute('SELECT value FROM runtime WHERE key=?', (key,)).fetchone()
+        previous = json.loads(row['value']) if row and row['value'] else {}
+        signatures = {str(slot): [bool(tray.get('available')), str(tray.get('material') or '').upper(), normalized_color(tray.get('color'))]
+                      for slot,tray in ams_state.items() if tray.get('known')}
+        if all(previous.get(slot) == signature for slot,signature in signatures.items()):
+            return
         db.execute('BEGIN IMMEDIATE')
         row = db.execute('SELECT value FROM runtime WHERE key=?', (key,)).fetchone()
         previous = json.loads(row['value']) if row and row['value'] else {}

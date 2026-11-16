@@ -593,7 +593,7 @@ def test_matching_color_with_missing_spool_mapping_explains_actual_problem(bridg
     job=finished_job(b,{1:1},ams=[])
     b.store.update_job(job,filaments_json=json.dumps({'1':{'color':'#104831','material':'PLA'}}))
     b.process_job(job)
-    assert 'keine Spoolman-Spulenzuordnung' in b.store.deductions_for_job(job)[0]['detail']
+    assert 'keine Bestandsrolle im Auftrag' in b.store.deductions_for_job(job)[0]['detail']
 
 
 def enable_internal(b):
@@ -1263,3 +1263,39 @@ def test_flow_allowance_frozen_per_job_and_booked_once(bridge, monkeypatch):
 def test_flow_allowance_zero_progress_does_not_deduct(bridge):
     rows,_,_=bridge.plan_consumption({'cancelled':1,'progress':0,'flow_calibration_allowance':True}, {1:10},{},{},{})
     assert not rows
+
+
+def test_late_confirmation_fills_missing_role_without_metadata_download(bridge, monkeypatch):
+    b=bridge;b.DRY_RUN=False
+    job=finished_job(b,{1:11.69},[1])
+    b.store.update_job(job,slot_mapping_json=json.dumps({'0':None,'1':None,'2':None,'3':None}),spools_snapshot_json='{}')
+    monkeypatch.setattr(b,'extract_weights_via_ftps',Mock(side_effect=AssertionError('Cached metadata must suffice')))
+    monkeypatch.setattr(b,'send_spoolman_deduction',Mock(return_value=('DONE','test')))
+    b.process_job(job)
+    assert b.store.get_job(job)['state']=='WAITING_MAPPING'
+    assert b.store.set_job_mapping(job,[1])
+    b.process_job(job)
+    assert b.store.get_job(job)['state']=='DONE'
+    rows=b.store.deductions_for_job(job)
+    assert len(rows)==1 and rows[0]['spool_id']==20 and rows[0]['grams']==11.69
+    b.process_job(job)
+    assert b.send_spoolman_deduction.call_count==1
+    assert not b.store.set_job_mapping(job,[0])
+
+
+def test_late_confirmation_preserves_captured_role_and_other_slots(bridge):
+    b=bridge
+    job=finished_job(b,{1:1},[1])
+    b.store.update_job(job,slot_mapping_json=json.dumps({'0':'10','1':'999','2':None}))
+    assert b.store.set_job_mapping(job,[1])
+    slots=json.loads(b.store.get_job(job)['slot_mapping_json'])
+    assert slots=={'0':'10','1':'999','2':None}
+
+
+def test_unchanged_ams_report_needs_no_write_lock(bridge):
+    b=bridge;b.INVENTORY_BACKEND='internal'
+    b.ams_state[0].update(known=True,available=True,material='PLA',color='#FFFFFF')
+    b.record_ams_changes()
+    with b.store.connection() as writer:
+        writer.execute('BEGIN IMMEDIATE')
+        b.record_ams_changes()  # Must succeed even while another writer owns the lock.

@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-16 — Nachträgliche Auftragszuordnung und Datenbanksperren
+
+- Eine bestätigte Auftragszuordnung ergänzt nun auch ursprünglich fehlende Schacht→Bestandsrollen im Auftragssnapshot. Bereits erfasste Rollen bleiben erhalten; ergänzt werden ausschließlich ausdrücklich gewählte Schächte. Neue Rollen werden bei Bedarf in den Bestandssnapshot aufgenommen.
+- Vorhandene 3MF-Verbrauchsdaten bleiben verwendbar, auch wenn die Druckdatei nicht mehr erreichbar ist. Bereits versuchte oder abgeschlossene Buchungen können weiterhin nicht neu zugeordnet werden.
+- Unveränderte AMS-Statusmeldungen benötigen keine SQLite-Schreibsperre mehr. WAL wird bei der Datenbankinitialisierung statt beim Öffnen jeder Verbindung gesetzt. Änderungen werden unter einer Schreibtransaktion erneut geprüft.
+- Verständlicher Hinweis bei fehlender Bestandsrolle im Auftrag. Regressionstests für nachträgliche Zuordnung, Snapshot-Erhaltung, Wiederholungsschutz und Statusabgleich bei belegter Schreibsperre ergänzt. 161 Tests lokal und im NAS-Container bestanden. Ein gesicherter betroffener Auftrag wurde auf einer isolierten Kopie ohne erneuten Dateidownload exakt einmal abgerechnet.
+
 ## 2026-11-16 — Gewichtsrundung, Flusszuschlag und vollständige Dokumentation
 
 - AMS-Rollenauswahl zeigt eine Nachkommastelle mit deutschem Dezimalkomma statt binärer Fließkommareste. Neue Restbestände aus Verbrauch, Teilkorrektur und Wiegekorrektur werden auf zwei Nachkommastellen gerundet; historische Journalmengen bleiben unverändert.
