@@ -1,185 +1,102 @@
 # Bambu-Spoolman-Plus
 
-Lokale Docker-Anwendung für Bambu Lab A1/A1 mini mit AMS Lite: Drucküberwachung, automatische Verbrauchsbuchung, integrierte Spulenverwaltung, Kamera mit Lichtsteuerung und Tapo-Steckdosensteuerung mit Energieanzeige. Unterstützt den bestehenden Spoolman-Betrieb und nach kontrollierter Migration ein eigenständiges internes Inventar. Nach `FINISH` werden die Slicer-Verbrauchswerte aus der 3MF-Datei den zugeordneten Spulen belastet; Abbruchmengen bleiben ausdrücklich gekennzeichnete Schätzungen.
+Lokale Docker-Anwendung für Bambu Lab A1/A1 mini und AMS Lite: Filamentbestand verwalten, eingelegte Rollen samt Material und Farbe dem Drucker zuweisen, Verbrauch nach dem Druck buchen und Kamera, Licht sowie Tapo-Steckdose bedienen.
 
-## Funktionen im Überblick
+![Aktuelle Druckübersicht mit A1-Darstellung – künstliche Beispieldaten](docs/assets/current/printer.png)
 
-- **Lokale Druckerkommunikation:** MQTT über TLS liefert Status, Fortschritt und AMS-Daten; FTPS lädt die geslicte 3MF-Datei in den Arbeitsspeicher.
-- **Slicer-basierte Verbräuche:** Grammwerte, Farben und Materialtypen aus `Metadata/slice_info.config`, passend zur gedruckten Platte. Die Bridge berechnet keine exakten Messwerte aus einzelnen G-Code-Bewegungen.
-- **Mehrmaterial und AMS Lite:** Drucker-/Benutzerzuordnung oder automatischer Farb- und Materialvergleich; Slot→Spoolman-Spule wird zum Druckstart gespeichert.
-- **Spulenwechsel und Reserven:** Gewichtsbasierte Aufteilung auf passende Spulen, beispielsweise 30 g + 70 g; unbestätigte physische Spulenwechsel werden als Schätzung gekennzeichnet.
-- **Abbruchbehandlung:** Automatische, gekennzeichnete Schätzung anhand des zuletzt bekannten Fortschritts.
-- **Weboberfläche:** Slot-Zuordnung, manuelle Abbuchung, auftragsbezogene Bestätigung, Live-Status, Logs und Buchungsjournal.
-- **Dauerhafter Betrieb:** SQLite-Journal, eingefrorene Buchungspläne, sichere Wiederaufnahme, Dry-Run, persistente Formularsitzungen und optionale Web-Anmeldung.
-- **Docker auf QNAP:** Eigenständige Bridge für einen bestehenden Spoolman, Healthcheck, Log-Rotation, SSH-Deployment mit Backup und Rückfallmöglichkeit.
+**Stand: 16. November 2026.** Alle aktuellen Screenshots wurden aus dieser Oberfläche mit künstlichen Beispieldaten erstellt. Sie enthalten keine echten Bestände oder Zugangsdaten. Die Funktionen und ihre Grenzen beschreibt die [ausführliche Bedienungsanleitung](docs/user-guide.md).
 
-## Bedienung und neue Funktionen
+## Funktionen
 
-Die gemeinsame Navigation führt zu Drucker & Verbrauch, Filamente & Spulen, Kamera, Steckdose & Energie und Einstellungen. Eine ausführliche [Bedienungsanleitung](docs/user-guide.md) beschreibt Einrichtung, täglichen Ablauf, Fehlermeldungen und Grenzen. Migration und Wiederherstellung stehen unter [Plus-Betrieb](docs/plus-operations.md).
+- **Druckübersicht:** Zustand, Fortschritt, Datei, aktiver AMS-Schacht und vom Drucker gemeldete Restzeit; schematische A1-Darstellung.
+- **Grafisches AMS Lite:** Rolle auswählen, Material-/Farbänderung prüfen und bestätigen; Bestandsbindung erst nach erfolgreicher Druckerrückmeldung. Änderungen an eindeutig inaktiven Schächten sind auch während eines Drucks möglich; aktive und angeforderte Schächte bleiben geschützt.
+- **Integriertes Inventar:** Hersteller, Produkte, physische Rollen und Lagerorte; Suchfilter, sortierbare Tabellen, getrennte Leergewichte und freie Zusatzangaben. Hersteller direkt im Produktdialog anlegen.
+- **Wiegekorrektur:** Gesamtgewicht eingeben; die App zieht das bekannte Leerspulengewicht ab und setzt den Restbestand. Auch unbekannte Bestände können so erfasst werden.
+- **Katalogvorlagen:** Optionale SpoolmanDB-Suche für neue Produkte. Vorlagen prüfen und übernehmen; keine automatische Änderung bestehender Produkte oder Slicer-Profile.
+- **Verbrauch und Journal:** Slicer-Grammwerte der gedruckten Platte, eingefrorene Bestands-/Zuordnungssnapshots, Abbruchschätzungen, manuelle Korrekturen und nachvollziehbare Wiegedaten mit Datum und Uhrzeit.
+- **Flusskontrolle:** Optional 2 g Zusatzverbrauch pro positiver Slicer-Filamentposition, einmalig je Auftrag und als Schätzung gekennzeichnet. Die Option aktiviert oder erkennt keine Druckerkalibrierung.
+- **Kamera und Licht:** Livebild bei Bedarf, Lichtschalter oberhalb der Bildfläche und neue Gerätezustandsbestätigung vor Erfolgsmeldung.
+- **Tapo P110:** Ein-/Ausschalten, Live-Leistung, Tages-/Monatsenergie und Laufzeit. Ausschalten verlangt bestätigten frischen Druckerleerlauf; eingeschaltetes Licht blockiert nicht.
+- **Auftragsbezogene Abschaltung:** Optional nach erfolgreichem Ende, abgeschlossener Buchung und 1–3 Minuten Wartezeit; standardmäßig aus. Keine temperaturgeführte Abkühlprüfung.
+- **Zwei Bestandssysteme:** Bestehendes Spoolman oder nach kontrollierter Migration internes SQLite-Inventar. Genau ein schreibendes Bestandssystem; kein stiller Backendwechsel.
 
-- **Spulenverwaltung:** Suchbare Spulenkarten, Material-/Herstellerfilter, verständliche Produktnamen, Bestandskorrekturen und Exporte. Neue Produkte können aus dem öffentlichen SpoolmanDB-Katalog vorbereitet werden.
-- **Kamera & Licht:** Livebild bei Bedarf öffnen und schließen; Druckerlicht direkt ein- oder ausschalten.
-- **Tapo P110:** Manuell schalten, Leistung, Tages-/Monatsverbrauch und Laufzeit ablesen; optionale Live-Abfragen. Abschalten verlangt einen frisch bestätigten Druckerleerlauf.
+## Voraussetzungen
 
-## Frühere Oberfläche
+Für die **Übertragung von Material und Farbe an das AMS müssen am Drucker LAN-only und Entwicklermodus aktiviert sein**. Der Moduswechsel erfolgt am Drucker nach Druckende. Ohne diese Freigabe kann die getestete Firmware Schreibbefehle ablehnen, obwohl Status und Bambu Studio funktionieren. LAN-only verändert die bisherige Bambu-Cloud-/Handy-Nutzung. Die App ändert den Modus nicht selbst. [Druckermodus einrichten](docs/user-guide.md#voraussetzungen-und-druckermodus).
 
-![Bambu-Spoolman Bridge v2.4.3 – aktuelle GUI mit anonymisierten Beispieldaten](docs/assets/gui-v2.4.3.jpg)
+Weitere Voraussetzungen:
 
-*Screenshot der GUI v2.4.3 mit anonymisierten Beispieldaten. Die dargestellten Buchungen und Logs sind Demonstrationsdaten.*
+- Docker Compose v2 und persistentes Datenverzeichnis.
+- Lokale Drucker-Erreichbarkeit: MQTT/TLS 8883, FTPS 990 und passive Datenports; für Livebild unterstützter LAN-Kamerastream.
+- Aktueller LAN-Zugangscode und Druckerkennung ausschließlich in privater Konfiguration.
+- Bei Spoolman-Betrieb eine erreichbare vorhandene Instanz und das in Compose angegebene externe Docker-Netzwerk. Bei internem Bestand bleibt dieses Netzwerk eine Compose-Voraussetzung, solange die mitgelieferte Datei unverändert verwendet wird; ein laufender Spoolman-Dienst ist dafür nicht erforderlich.
+- Optional Tapo P110 und private Gerätezugänge für Schalten und Energiemessung.
 
-## Kommunikation und Verarbeitung
+## Oberfläche nach Bereichen
 
-Jeder Flow steht in einem eigenen Diagrammfeld und lässt sich unabhängig öffnen und zoomen.
+### AMS Lite
 
-### Kommunikationsflow
+![Rollenwahl und Vergleich zwischen Drucker und Bestand](docs/assets/current/ams-lite.png)
 
-Verbindungen zwischen Drucker, Bridge, Spoolman, Datenbank und Browser.
+[Normaler Rollenwechsel, Fallback und Schutz während des Drucks](docs/user-guide.md#spulen-im-ams-lite).
 
-[Einzelansicht öffnen und separat zoomen](docs/flows/communication.md)
+### Filamentbestand
 
-```mermaid
-flowchart LR
-    Printer["Bambu A1 / A1 mini<br/>AMS Lite"]
-    Slicer["Bambu Studio / OrcaSlicer<br/>G-Code in 3MF + Slicer-Metadaten"]
-    Bridge["Bridge im Docker-Container<br/>Tracker + Worker + Weboberfläche"]
-    Ledger[("Persistentes SQLite-Journal<br/>Aufträge + Buchungspositionen")]
-    Spoolman["Bestehender Spoolman<br/>Spulenbestand + REST API"]
-    Browser["Browser<br/>Zuordnung + Journal + manuelle Buchung"]
-    Slicer -->|"Druckdatei und Startauswahl"| Printer
-    Printer -->|"MQTT TLS :8883<br/>Status, Fortschritt, AMS-Slots"| Bridge
-    Bridge -->|"MQTT: Statusanforderung pushall"| Printer
-    Printer -->|"FTPS :990 + passive Ports<br/>geslicte 3MF-Datei"| Bridge
-    Bridge <-->|"GET Spulen / PUT Verbrauch<br/>HTTP REST API"| Spoolman
-    Bridge <--> Ledger
-    Browser <-->|"HTTP :7913"| Bridge
-```
+![Suchbare Spulenkarten mit Material, Farbe und Restbestand](docs/assets/current/spools.png)
 
----
+[Produkte und Rollen](docs/user-guide.md#filamente-und-physische-spulen) · [Wiegekorrektur](docs/user-guide.md#wiegen-und-bestandskorrektur) · [Archivierte Rollen entfernen](docs/user-guide.md#löschen-und-archivieren).
 
-### Verarbeitungsflow
+### Buchungsjournal
 
-Verarbeitung vom Druckstart bis zur bestätigten Buchung oder Fehlerbehandlung.
+![Journal mit Abbruch, Flusszuschlag und manueller Korrektur](docs/assets/current/journal.png)
 
-[Einzelansicht öffnen und separat zoomen](docs/flows/processing.md)
+[Aufträge und Buchungszustände verstehen](docs/user-guide.md#journal-und-offene-druckaufträge).
 
-```mermaid
-flowchart TD
-    Start["MQTT: Druckstart erkannt"] --> Snapshot["Slot-Zuordnung und AMS-Bestand speichern<br/>Worker lädt Slicer-Daten und Spoolman-Restgewichte"]
-    Snapshot --> Track["Fortschritt und verwendete Slots verfolgen<br/>während des Druckens nichts abbuchen"]
-    Track --> End{"Druckende"}
-    End -->|"FINISH"| Full["Slicer-Grammwerte der gedruckten Platte"]
-    End -->|"Abbruch / Fehler / unerwartet IDLE"| Estimate["Slicer-Grammwerte × letzter Fortschritt<br/>als Schätzung kennzeichnen"]
-    Full --> Map{"Zuordnung vollständig?"}
-    Estimate --> Map
-    Map -->|"Nein"| Wait["Auftrag offenhalten<br/>Metadaten erneut laden oder Zuordnung bestätigen"]
-    Wait --> Map
-    Map -->|"Ja"| Allocate["Beobachtete Slots bevorzugen<br/>gleiche Spulen nach kleinstem positivem Restgewicht<br/>bei Bedarf passende Spoolman-Reserven einbeziehen"]
-    Allocate --> Plan["Buchungsplan pro Spule speichern<br/>Aufteilungen und Bestandsdefizite kennzeichnen"]
-    Plan --> Mode{"Dry-Run?"}
-    Mode -->|"Ja"| Sim["Nur simulieren<br/>historisch nicht nachbuchen"]
-    Mode -->|"Nein"| Book["Spoolman: PUT Verbrauch in Gramm"]
-    Book --> Result{"Ergebnis"}
-    Result -->|"Bestätigt"| Done["Buchung durch Spoolman bestätigt"]
-    Result -->|"Sicher noch nicht gebucht"| Retry["Plan unverändert später erneut versuchen"]
-    Retry --> Book
-    Result -->|"Antwort unklar"| Unknown["UNKNOWN: keine automatische Wiederholung<br/>Bestand prüfen"]
-    Result -->|"Abgelehnt"| Rejected["REJECTED: Fehler im Journal anzeigen"]
-```
+### Steckdose und Energie
 
-Das [detaillierte Kommunikations- und Verarbeitungskonzept](docs/architecture.md) erklärt Protokolle, Datenquellen, Zustände, Spulenaufteilung und die Grenzen der Schätzungen. Änderungen stehen im [Changelog](CHANGELOG.md), der freigegebene Betriebsstand in [DEPLOYMENT.md](DEPLOYMENT.md).
+![Tapo-Steuerung und künstliche Energiemesswerte](docs/assets/current/power.png)
 
-## Einrichtung
+[Manuell schalten und Live-Abfragen](docs/user-guide.md#steckdose-und-energie) · [Nach einem Druck ausschalten](docs/user-guide.md#automatisch-nach-dem-druck-ausschalten).
 
-Voraussetzungen: Docker Compose v2, erreichbarer Drucker mit LAN-Zugangscode (MQTT TLS 8883, implizites FTPS 990 sowie passive Datenports), vorhandene Spulen in Spoolman. Die Compose-Datei benötigt den Namen eines bereits bestehenden Docker-Netzwerks, an dem Spoolman angeschlossen ist (`SPOOLMAN_NETWORK`). Diesen Namen zeigt `docker inspect spoolman --format '{{json .NetworkSettings.Networks}}'`.
+Screenshots für **Kamera, Produktverwaltung, Wiegen, Abschaltautomatik und Einstellungen** stehen in der [Bedienungsanleitung](docs/user-guide.md). Herkunft und Grenzen der Abbildungen: [Screenshot-Hinweise](docs/assets/current/README.md).
+
+## Einrichtung und Aktualisierung
 
 ```sh
 cp .env.example .env
-# .env mit lokalen Werten bearbeiten
+# Private lokale Werte in .env eintragen.
 mkdir -p data
+# Das konfigurierte externe Netzwerk muss bereits vorhanden sein.
 docker compose up -d --build
 ```
 
-Weboberfläche: `http://<NAS-IP>:7913`. Dort die vier AMS-Slots und optional die externe Spule zuweisen. Der Dienst startet standardmäßig mit `DRY_RUN=true`: Das Journal zeigt simulierte Verbräuche; Spoolman bleibt unverändert. Nach einem erfolgreich geprüften Druck `DRY_RUN=false` setzen und den Container neu erstellen:
+Die Weboberfläche ist unter `http://<Docker-Host>:7913` erreichbar. Beide Web-Zugangswerte setzen, bevor andere Geräte Zugriff erhalten. Standard: `INVENTORY_BACKEND=spoolman` und `DRY_RUN=true`. Im Spoolman-Modus ist die native Inventaransicht eine Vorschau; deren Bearbeitung wird erst nach kontrollierter Aktivierung des internen Backends freigeschaltet.
 
-```sh
-docker compose up -d --force-recreate bambu-bridge
-```
+**Bestehende Installationen nicht mit einer leeren Datenbank neu aufsetzen.** Vor Aktualisierung oder Migration vollständige private Sicherungen erstellen, Kandidat mit einer Datenkopie prüfen und erst dann freigeben. Nach Start Health, Betriebsmodus, Journal, Bestände und Geräteansichten prüfen. Anleitung: [Betrieb, Migration, Backup und Rollback](docs/plus-operations.md).
 
-Historische Simulationen werden **nicht** nachgebucht. Manuelle Buchungen unterliegen ebenfalls dem Dry-Run-Modus.
+Das historische `deploy_qnap.py` darf für diesen Plus-Stand **nicht unverändert** eingesetzt werden: Es bildet die neuen Python-Module und den vom laufenden Spoolman unabhängigen Betrieb nicht vollständig ab. Neue Images aus dem gesamten Verzeichnis `bridge/` bauen. Individuelle Infrastruktur und Deployment-Protokolle gehören nicht ins öffentliche Repository. [Prüf- und Freigabestand](DEPLOYMENT.md).
 
-## Spoolman-Verbindung
+## Verarbeitung und Architektur
 
-`SPOOLMAN_URL` muss aus dem Bridge-Container erreichbar sein, beispielsweise `http://<NAS-IP>:7912`. Der Name `http://spoolman:8000` funktioniert nur, wenn beide Container ein gemeinsames Docker-Netzwerk mit diesem DNS-Namen verwenden. Diese Compose-Datei verbindet die Bridge zusätzlich mit `SPOOLMAN_NETWORK`, betreibt ausschließlich die Bridge und verändert den vorhandenen Spoolman nicht. Auf QNAP kann die Verbindung zur eigenen NAS-IP aus dem Container blockiert sein; dann die direkte interne Adresse im gemeinsamen Netzwerk verwenden. `SPOOLMAN_BROWSER_URL` legt unabhängig davon den erreichbaren Browser-Link fest.
+[Kommunikationsflow](docs/flows/communication.md) · [Verarbeitungsflow](docs/flows/processing.md) · [Ausführliche Architektur](docs/architecture.md) · [Filament-Workflow](docs/filament-workflow.md).
 
-Die Oberfläche zeigt den Verbindungsstatus. Die Buchung verwendet Spoolmans `PUT /api/v1/spool/{id}/use` mit `use_weight` in Gramm. API-Referenz: [Spoolman](https://github.com/Donkie/Spoolman/blob/master/spoolman/api/v1/spool.py).
+Die Slicer-Filamentposition ist kein physischer AMS-Schacht. Die Bridge verwendet ausdrückliche Auftragszuordnungen, Drucker-Mapping und als Fallback den exakten Farb-/Materialfamilienabgleich. Slot→Bestandsrolle und Auftragszuordnung werden getrennt behandelt. Während des Druckens wird kein Verbrauch abgebucht.
 
-## AMS- und Druckdaten
+Nach FINISH werden die Grammwerte der ausgewählten Platte gebucht. Bei Abbruch wird nach Fortschritt geschätzt. Rollenaufteilungen, unbestätigte Reserven und Flusszuschlag bleiben als Schätzung kenntlich. Die interne Buchung aktualisiert Bestand, Verbrauch und Journal atomar und idempotent. Der externe Spoolman-Weg schützt unklare Ergebnisse vor automatischer Wiederholung.
 
-Für den täglichen Einsatz: [Schritt-für-Schritt-Anleitung für AMS, Slicer-Projekt und Spoolman](docs/filament-workflow.md). Dort sind auch [die Grenzen der AMS-Slot-Erkennung aus 3MF-Dateien](docs/filament-workflow.md#kann-die-3mf-den-verwendeten-ams-slot-verraten) und [die Regeln für Slicer-Farbcodes](docs/filament-workflow.md#welche-farbcodes-darf-ich-im-slicer-verwenden) erklärt. Sie erklärt auch, warum eine Profil-Standardfarbe allein nicht genügt und warum Spoolman seine reale Filamentfarbe behalten darf.
+## Validierung und bekannte Grenzen
 
-Slicer-Filament-IDs und `T0`/`T1` im G-Code sind keine verbindlichen physischen AMS-Slots: Die Auswahl beim Druckstart kann sie auf andere Slots abbilden.
+Stand 16. November 2026: **158 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
 
-Die Bridge verwendet zuerst eine ausdrücklich bestätigte Zuordnung oder `ams_mapping`/`ams_mapping2` vom Drucker. Fehlen diese Daten, ist mit `AUTO_MATCH_FILAMENTS=true` ein exakter Vergleich von **RGB-Farbe und Materialtyp** möglich: Die 3MF-Filamentdaten werden mit einem gespeicherten AMS-Bestand zum Druckstart verglichen. Es gibt keine Farbtoleranz, keine Auswahl nach Ähnlichkeit und keinen Vergleich mit möglicherweise abweichenden Spoolman-Farben. Das Journal nennt die Quelle der automatischen Zuordnung.
+Am Referenzsystem wurden Licht, manuelles Schalten und ein tatsächlicher AMS-Farbwechsel im Leerlauf geprüft; ursprüngliche Farbe und Bestandsbindung wurden danach wiederhergestellt. Ein echter Farbwechsel während eines laufenden Drucks nach Modusumstellung sowie ein vollständiger automatischer Abschaltzyklus der neuen Funktion sind noch nicht hardwarebestätigt. Das ist kein Freigabenachweis für andere Modelle oder Firmwarestände.
 
-Diese Automatik setzt voraus, dass die Slicer-Farben den beim Druckstart tatsächlich gewählten AMS-Farben entsprechen. Bei absichtlich abweichender Farbauswahl die Zuordnung für den Auftrag ausdrücklich bestätigen oder `AUTO_MATCH_FILAMENTS=false` setzen. Die externe Spule wird nicht allein anhand einer Farbe automatisch gewählt.
+## Dokumentation
 
-Bei mehreren passenden AMS-Spulen haben die während des Druckens beobachteten Slots Vorrang; anschließend werden Spulen mit dem kleinsten positiven Restgewicht zuerst berücksichtigt. Fehlt eine notwendige Zuordnung oder fehlen bei gleichartigen Spulen alle Restgewichte, wartet der **gesamte Auftrag** mit `WAITING_MAPPING`; auch andere Positionen bleiben vorerst ungebucht. Unter „Druckaufträge und Filamentzuordnung“ kann die Zuordnung für genau diesen Auftrag bestätigt werden. Positionen ohne bisherigen API-Versuch können dabei korrigiert werden. Bereits verarbeitete Positionen sind gesperrt; die Bestätigung gilt nicht für spätere Drucke.
+- [Bedienungsanleitung mit Screenshots](docs/user-guide.md)
+- [Betrieb, Migration, Sicherung und Wiederherstellung](docs/plus-operations.md)
+- [Architektur und Datenquellen](docs/architecture.md)
+- [Filament- und Auftragszuordnung](docs/filament-workflow.md)
+- [Changelog](CHANGELOG.md)
+- [Prüfstand](DEPLOYMENT.md)
 
-Beim **Spulenwechsel zwischen Drucken** immer die AMS-Slot→Spoolman-Spule-Zuordnung aktualisieren und Farbe sowie Material im Drucker korrekt pflegen. Für mehrere gleichartige Spulen wird die Menge anhand der zu Druckbeginn gespeicherten Restgewichte aufgeteilt, zum Beispiel 30 g aus der ersten und 70 g aus der zweiten Spule bei 100 g Gesamtverbrauch. Bereits für andere Slicer-Filamente reservierte Mengen werden dabei berücksichtigt. Diese Aufteilung ist eine **Schätzung**, keine Messung des tatsächlichen Wechselzeitpunkts.
-
-Reicht der Bestand der zugeordneten AMS-Spulen rechnerisch nicht, werden weitere nicht archivierte Spoolman-Spulen berücksichtigt, deren Farbe und Material exakt dem primären **Spoolman-Filament** entsprechen. Reservespulen ohne bestätigten AMS-Slot erscheinen im Journal mit „—“ als Schacht und einem entsprechenden Schätzungshinweis. Die Bridge legt keine Spule physisch ein und aktiviert **nicht** die Auto-Refill-Funktion des Druckers. Sind auch alle passenden Reserven rechnerisch aufgebraucht, wird die verbleibende Differenz der letzten passenden Spule belastet und ausdrücklich vermerkt. Korrekt gepflegte Restgewichte und Filamentdaten sind daher wichtig.
-
-Bei `FAILED`, `CANCEL`, `STOPPED`, `ERROR` und unerwartetem `IDLE` wird die letzte bekannte Fortschrittsangabe gespeichert und mit den Slicer-Grammwerten multipliziert. Beispiel: 100 g vollständig gesliced und Abbruch bei 40 % → 40 g geschätzt. Das ist keine Messung des bisherigen Materialverbrauchs; gerade bei Mehrmaterialdruck kann der echte Verbrauch anders verteilt sein. Bei 0 % entsteht keine positive Buchung, obwohl zum Beispiel Spülmaterial verbraucht worden sein kann. **Jede Schätzung ist im Journal gekennzeichnet.**
-
-Bei Dateien mit mehreren Druckplatten wird nur die durch `param=Metadata/plate_N.gcode` identifizierte Platte abgerechnet. Fehlt die Auswahl, wartet der Auftrag auf eindeutige Metadaten. Die heruntergeladene Datei wird nur im Arbeitsspeicher gehalten. Größenlimits: `MAX_3MF_BYTES` und `MAX_XML_BYTES`.
-
-Die Slot→Spule-Zuordnung wird beim Druckstart gespeichert; spätere Spulenwechsel verändern bereits vorgemerkte Buchungen nicht. Fehlende Spulenzuordnungen können durch Speichern in der Oberfläche ergänzt werden. MQTT-Deltas erhalten bereits bekannte Werte. `FINISH` ohne zuvor erkannten Druck löst keine Buchung aus.
-
-## Journal und Wiederaufnahme
-
-SQLite speichert Drucke und jede einzelne Buchungsposition dauerhaft. Beim Druckstart erfasst ein Hintergrund-Worker Slicer-Metadaten und Spoolman-Restgewichte; laufende Drucke werden dabei noch nicht abgerechnet. Der Aufteilungsplan wird vor dem ersten API-Versuch eingefroren und bei Wiederholung nicht neu verteilt. Ein wiederholtes `FINISH` löst keine zweite Buchung aus. Bekannte Verbindungsfehler vor einer Buchung (`RETRY`) sowie fehlende Metadaten werden im Minutentakt erneut geprüft. Erfolgreiche Positionen werden dabei nicht wiederholt.
-
-Nach einem unklaren Antwortverlust, HTTP 5xx oder Neustart während einer API-Anfrage lautet der Status `UNKNOWN`. Hier ist eine manuelle Bestandsprüfung in Spoolman erforderlich: Die Verbrauchs-API bietet keine Idempotenzkennung, daher wäre eine automatische Wiederholung möglicherweise eine Doppelbuchung. `REJECTED` bedeutet eine abgelehnte Anfrage. `/api/status` liefert zusätzlich die Auftragszustände und Fehlerdetails. `/health` prüft die Anwendung, unabhängig von der Drucker-Erreichbarkeit.
-
-## QNAP-Pfade und Deployment
-
-Linux unterscheidet Groß-/Kleinschreibung. `/share/Daten/Container/...` und `/share/daten/container/...` können verschiedene Verzeichnisse sein. `BRIDGE_DATA_DIR` bezeichnet den **NAS-seitigen** Datenpfad, beispielsweise `/share/Daten/Container/bambu-spoolman/data`. Ein Notebook-Mount wie `/mnt/NAS/...` gehört nicht in den NAS-Container-Mount.
-
-Das Deployment läuft vom Notebook per SSH-Schlüssel:
-
-```sh
-python3 scripts/deploy.py \
-  --host '<SSH-Benutzer>@<NAS-IP>' \
-  --key ~/.ssh/bambu_spoolman_deploy \
-  --target /share/Daten/Container/bambu-spoolman \
-  --legacy /share/daten/container/bambu-spoolman \
-  --spoolman-url 'http://spoolman:8000' \
-  --spoolman-network '<vorhandenes-Spoolman-Netzwerk>' \
-  --spoolman-browser-url 'http://<NAS-IP>:7912'
-```
-
-Nach der ersten Migration bei weiteren Updates `--legacy` weglassen. Ein mit Passphrase geschützter Schlüssel muss in einem SSH-Agenten geladen sein, dessen `SSH_AUTH_SOCK` im aufrufenden Terminal gesetzt ist.
-
-Das Skript baut das Image vor dem Stoppen, verweigert Updates bei einem erkannten laufenden/pausierten Druck, stoppt ausschließlich die Bridge, sichert Konfiguration und Daten konsistent unter `backups/<Zeitstempel>/`, übernimmt die Daten und startet die neue Version. Abschließend werden Anwendung, Mount und Spoolman aus dem Container geprüft. Bei Fehlern wird der vorherige Stack wieder gestartet. Bei Pfadmigration bleibt das Quellverzeichnis als Rückfallbestand erhalten und wird nicht mehr verwendet.
-
-Die Sicherung enthält Zugangsdaten und Betriebsdaten und gehört ausschließlich auf das private NAS. `.env`, Datenbanken und Backups sind von Git ausgeschlossen. Optionale Web-Anmeldung: `WEB_USERNAME` und `WEB_PASSWORD` gemeinsam setzen. Der Sitzungsschlüssel wird in SQLite gespeichert und übersteht Container-Updates. Bei einer abgelaufenen oder ungültigen Formularsitzung wird nichts gebucht; die Fehlerseite führt zurück zur Oberfläche.
-
-## Tests
-
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -r bridge/requirements.txt pytest
-.venv/bin/python -m pytest -q
-```
-
-Die Tests verwenden temporäre SQLite-Datenbanken und simulierte API-Aufrufe. Sie verändern keine echten Spoolman-Bestände. Python 3.11 wird zusätzlich in GitHub Actions geprüft.
-
-## Lizenz
-
-MIT
-
-## Bambu-Spoolman-Plus
-
-Die integrierte Betriebsart ergänzt native Hersteller, Filamentprodukte, physische Spulen, Lagerorte, AMS-Zuordnung, transaktionale Verbrauchsbuchung und JSON-Austausch. `/inventory`, `/settings` und `/devices` sind aus der Hauptoberfläche erreichbar. Die bestehende MQTT-/FTPS-/3MF-Auswertung bleibt erhalten.
-
-Der Standard `INVENTORY_BACKEND=spoolman` erhält den bisherigen Betrieb. Die interne Betriebsart verlangt eine kontrollierte Offline-Migration mit Vollbackup und Testimport. Anleitung, Rückkehrverfahren und Gerätegrenzen: [Plus-Betrieb](docs/plus-operations.md). Geheimnisse gehören in private Laufzeitkonfiguration, niemals in Git.
+Private `.env`, SSH-Schlüssel, Passwörter, Druckerzugänge, Datenbanken, Logs und Inventarexporte niemals veröffentlichen. Die Anwendung gehört in ein vertrauenswürdiges lokales Netz; keine ungeschützte Internetfreigabe einrichten.

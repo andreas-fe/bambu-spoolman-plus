@@ -1,5 +1,36 @@
 # Änderungen
 
+## 2026-11-16 — Gewichtsrundung, Flusszuschlag und vollständige Dokumentation
+
+- AMS-Rollenauswahl zeigt eine Nachkommastelle mit deutschem Dezimalkomma statt binärer Fließkommareste. Neue Restbestände aus Verbrauch, Teilkorrektur und Wiegekorrektur werden auf zwei Nachkommastellen gerundet; historische Journalmengen bleiben unverändert.
+- Abschaltbare Option „Flusskontrolle berücksichtigen · 2 g je Farbe“: einmalig 2 g je Slicer-Filamentposition mit positivem geplantem Verbrauch. Einstellung wird beim Erkennen des neuen Auftrags festgeschrieben; Zuschlag gehört zum eingefrorenen Plan und erscheint als Schätzung. Standardmäßig aus; keine automatische Aktivierung oder Erkennung der Druckerkalibrierung.
+- Bei Abbruch bleiben Farben und Grundmengen geschätzt; jede positive Position erhält den vollen Zuschlag, null geschätzter Verbrauch keinen Zuschlag. Getrennte gleichfarbige Slicer-Positionen werden getrennt behandelt.
+- README, Bedienungs-, Architektur-, Betriebs- und Zuordnungsdokumentation aktualisiert. LAN-only plus Entwicklermodus als Voraussetzung für AMS-Schreibaktionen hervorgehoben; Grenzen der Firmware-/Kalibrierungserkennung beschrieben.
+- Zehn aktuelle Bereichsscreenshots aus der echten Oberfläche mit ausschließlich künstlichen Daten ergänzt.
+- 158 Tests lokal und im NAS-Container bestanden; Health und tatsächliche Gewichtsanzeige sowie verfügbare, deaktivierte Zuschlagsoption geprüft.
+
+## 2026-11-15 — Grafisches AMS, bestätigte Rollenübernahme und Abschaltautomatik
+
+- Eigene schematische A1- und anklickbare AMS-Lite-Grafik mit aktuellen Farben, Materialkategorien, aktivem Filamentweg und tastaturbedienbarer Schachtauswahl.
+- Primärer Rollenwechsel über die App: Rolle wählen, Änderung prüfen und bestätigen. Bereits passende Angaben benötigen nur die Bestandszuordnung; sonst werden Material/Farbe an den Drucker übertragen und erst nach bestätigtem Zustand gebunden.
+- Einzelaktionen schützen aktive und bereits angeforderte Schächte, erlauben eindeutig inaktive Schächte auch während eines Drucks und verändern keine anderen Bindungen. Fallback für Änderungen in Bambu Studio oder direkt am Drucker mit bewusst bestätigbarer Abweichung.
+- Geprüfte Vorschau, kurze Gültigkeit, Einmalversuch und Schutz gegen parallele/überholte Änderungen. Keine automatische Wiederholung unklarer AMS-Befehle. Wiederverwendung ausschließlich aktueller bekannter Druckerprofile samt Temperaturbereich.
+- Materialfamilien ermöglichen etwa PLA→PLA+/PLA Meta und PETG→PETG-CF bei gleichem Farbcode; detaillierte Bestandsbezeichnungen und Slicer-Profile bleiben erhalten.
+- Firmware-Ablehnungen werden ausdrücklich ausgewertet. Erfolg erfordert passende neue und stabile Schachtmeldungen; vorübergehend leere/repopulierte AMS-Daten führen nicht mehr zu verfrühter Bestandsbindung.
+- Druckrelevante Rollenwechsel verlangen vor der späteren Buchung eine Auftragsprüfung; historische Zuordnungssnapshots werden nicht unbemerkt ersetzt.
+- Gemeinsames Journal zeigt auch manuelle Bestands- und Wiegekorrekturen, ohne sie als Druckverbrauch zu zählen.
+- Auftragsbezogene automatische Tapo-Abschaltung nach normalem Ende, vollständig geklärter Buchung, 1–3 Minuten Verzögerung und erneuter Leerlaufprüfung; standardmäßig aus. Neuer Druck, Abbruch oder ungeklärter Ausgang verhindern unbeabsichtigte Wiederholungen. Keine Temperaturprüfung.
+- Druckerrestzeit aus Telemetrie ergänzt; alte/unbekannte Angaben werden nicht als aktuelle Restzeit weiterverwendet.
+- 155 Tests für den stabilisierten AMS-Stand bestanden. Echter Farbwechsel an Slot 3 im Leerlauf nach Aktivierung von LAN-/Entwicklermodus bestätigt; ursprüngliche Farbe und Bindung wiederhergestellt. Farbwechsel während laufenden Drucks und vollständiger automatischer Ausschaltzyklus bleiben als Hardwareprüfungen offen.
+
+## 2026-11-14 bis 2026-11-15 — Filamentpflege und nachvollziehbare Korrekturen
+
+- Separates Leerspulengewicht und freies Feld „Sonstiges“ am Produkt; Bezeichnung und genauer Filamenttyp ersetzen zusätzliche Pflichtpflege von Farbname, Artikelnummer und Variante. Frühere Daten bleiben gespeichert.
+- Wiegekorrektur setzt Restbestand aus Gesamtgewicht minus Leergewicht, einschließlich zuvor unbekannter Bestände. Produkt-Leergewicht dient als Standard, individuelle Rollenwerte können abweichen.
+- Löschen unbenutzter Einträge und historienerhaltendes Entfernen archivierter Rollen ergänzt. Aktuelle Zuordnungen und offene Aufträge bleiben geschützt; identische andere Rollen werden nicht entfernt.
+- Sortierbare Tabellen, Such-/Statusfilter, Farbvergleich und kompaktere Produktspalten mit erreichbaren Aktionen. Hersteller direkt beim Produktanlegen ergänzbar.
+- Journal und Logs mit Datum und Uhrzeit; bei Abbruch ausdrücklicher Hinweis „Teilmenge bis Abbruch gebucht“ statt unklarer Standarddetails.
+
 ## 2026-11-12 — Korrektur Lichtsteuerung und Abschaltprüfung
 
 - MQTT-Anfragen verwenden QoS 0 und begrenzte, threadsicher erzeugte Sequenznummern statt Nanosekunden-Zeitstempeln für Lichtbefehle.

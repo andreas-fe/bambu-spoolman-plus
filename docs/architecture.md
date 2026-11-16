@@ -1,165 +1,108 @@
-# Kommunikations- und Verarbeitungskonzept
+# Architektur und Datenquellen
 
-Die Bridge verbindet einen Bambu Lab A1/A1 mini mit AMS Lite mit einer bestehenden Spoolman-Instanz. Sie liest Drucker- und Slicer-Daten, ordnet den Verbrauch den Spulen zu und führt die Bestandsbuchung aus. Sie startet keine Drucke und steuert keinen physischen Spulenwechsel.
+Stand: 16. November 2026. Bedienabläufe und Screenshots stehen in der [Bedienungsanleitung](user-guide.md), Sicherung und Migration in [Plus-Betrieb](plus-operations.md).
 
-## Komponenten und Schnittstellen
+## Komponenten und Verbindungen
 
-| Verbindung | Protokoll | Zweck |
-|---|---|---|
-| Bridge ↔ Drucker | MQTT über TLS, TCP 8883 | Statusmeldungen, Druckfortschritt, aktive AMS-Slots, Farben und Materialtypen; regelmäßige `pushall`-Statusanforderung |
-| Bridge → Drucker | Implizites FTPS, TCP 990 und passive Datenports | Geslicte 3MF-Datei aus dem Drucker-Cache herunterladen |
-| Bridge ↔ Spoolman | HTTP REST im gemeinsamen Docker-Netzwerk | Spulen lesen und Verbrauch mit `PUT /api/v1/spool/{id}/use` buchen |
-| Browser ↔ Bridge | HTTP, standardmäßig Port 7913 | Zuordnung, Status, manuelle Buchung, Journal und Logs |
-| Bridge → persistentes Datenverzeichnis | SQLite und JSON | Aufträge, Fortschritt, Bestands-Snapshots, Buchungsplan, Formularsitzung und Slot-Zuordnung speichern |
+| Verbindung | Aufgabe |
+|---|---|
+| Drucker → Bridge, MQTT/TLS 8883 | Statusdeltas, Fortschritt, Restzeit, AMS-Schächte, aktive/angeforderte Schachtlage und Befehlsantworten |
+| Bridge → Drucker, MQTT/TLS 8883 | Vollstatus anfordern, Licht schalten, geprüfte AMS-Metadaten setzen |
+| Bridge → Drucker, FTPS 990 und passive Ports | Geslicte 3MF-Datei in den Arbeitsspeicher laden |
+| Browser ↔ Bridge, HTTP 7913 | Ansichten, Live-Status und bestätigte Formulare |
+| Bridge ↔ SQLite | Aufträge, Buchungspläne, Inventar, Bewegungen, Einstellungen und Sitzungsdaten |
+| Bridge ↔ bestehendes Spoolman, optional HTTP REST | Externe Bestandsabfrage und Verbrauchsbuchung ausschließlich im Spoolman-Backend |
+| Browser → Bridge → Kamera | Bedarfsgesteuerter unterstützter A1/P1-LAN-Stream |
+| Bridge → Tapo-Hilfsprozess → P110 | Schalten und Messwerte; Isolation der nativen Gerätebibliothek |
+| Bridge → SpoolmanDB | Öffentliche Produktvorlagen, serverseitig zwischengespeichert |
 
-Die Druckerverbindungen verwenden den LAN-Zugangscode. Die TLS-Verbindungen sind verschlüsselt; die selbst signierten Druckerzertifikate werden im aktuellen Client nicht gegen eine vertrauenswürdige Zertifikatskette geprüft. Die Bridge benötigt weder Bambu-Cloud-Zugangsdaten noch einen Cloud-Dienst für ihre eigene Verarbeitung.
+Der lokale Druckerzugriff benötigt private Zugangsdaten. Die Drucker-TLS-Verbindungen sind verschlüsselt; selbst signierte Zertifikate werden im implementierten Client nicht gegen eine vertrauenswürdige Zertifikatskette validiert. Der Betrieb setzt ein vertrauenswürdiges lokales Netz voraus. Für AMS-Schreiben sind auf der getesteten Firmware LAN-only und Entwicklermodus erforderlich.
 
-## Ablauf eines Druckauftrags
+## Module
+
+| Modul | Verantwortung |
+|---|---|
+| `bridge.py` | MQTT-Ereignisse, Aufträge, Planung, Buchungsworker, Webrouten und Vorschauprüfung |
+| `printer_telemetry.py` | Deltaerhaltung, Aktualität, Licht- und AMS-Bestätigung einschließlich Ablehnungen |
+| `ams_control.py`, `ams_selection.py` | Schachtschutz, bekannte Profile, Material-/Farbvergleich, Änderungsfingerabdruck |
+| `ams_ui.py`, `device_visuals.py`, `ui.py` | Geprüfter Rollenablauf, eigene SVG-Gerätegrafiken und gemeinsame Oberfläche |
+| `inventory_db.py`, `inventory_service.py` | Additives Schema, atomare Bestandsbewegungen und referenzgeschütztes Entfernen |
+| `inventory_api.py`, `inventory_ui.py` | Produkt-/Rollenpflege, Korrekturen und verständliche Darstellung |
+| `inventory_exchange.py`, `migrate_inventory.py` | Native Exporte/Wiederherstellung und kontrollierter Spoolman-Import |
+| `materials.py`, `filament_catalog.py` | Gemeinsame Materialfamilien und optionale Katalogvorlagen |
+| `devices.py`, `tapo_worker.py` | Kamera, Licht und isolierte Steckdosenaktionen |
+| `auto_power.py` | Auftragsbezogene Abschaltung mit Wartezeit und mehrfacher Prüfung |
+
+## Zwei getrennte Zuordnungsstufen
+
+1. **AMS-Schacht → physische Bestandsrolle:** Welche konkrete Rolle liegt im Schacht? Die App-Rollenübernahme ist der normale Weg. Farbe und Familie allein identifizieren keine Rolle.
+2. **Slicer-Filamentposition → AMS-Schacht:** Welches Filament des Druckauftrags verwendet welchen Schacht? Quellen sind ausdrückliche Benutzerbestätigung, Drucker-Mapping oder der exakte Farb-/Materialfamilienvergleich als Fallback.
+
+Ein T0/T1 oder Filamentindex ist kein verbindlicher physischer AMS-Slot. Die beim Start gewählte Zuordnung kann von der Reihenfolge im Slicer abweichen. Die externe Spule wird ausdrücklich zugeordnet.
+
+## AMS-Schreibtransaktion
 
 ```mermaid
-sequenceDiagram
-    participant P as Bambu-Drucker
-    participant M as MQTT-Tracker
-    participant W as Hintergrund-Worker
-    participant D as SQLite-Journal
-    participant S as Spoolman
-    P->>M: RUNNING/PREPARE, Datei, AMS-Daten
-    M->>D: Auftrag + Slot-Zuordnung + AMS-Snapshot
-    M->>W: Auftrag zur Metadaten-Erfassung vormerken
-    W->>S: GET /api/v1/spool
-    S-->>W: Restgewichte, Farben und Materialien
-    W->>D: Ersten verfügbaren Bestands-Snapshot speichern
-    W->>P: FTPS: geslicte 3MF-Datei laden
-    P-->>W: ZIP-Archiv mit G-Code und Slicer-Metadaten
-    W->>D: Gewichte und Filament-Metadaten speichern
-    loop Während des Druckens
-        P->>M: MQTT-Deltas: Fortschritt, Layer, Slot, Status
-        M->>D: Fortschritt und beobachtete Slots aktualisieren
-    end
-    alt Vollständiger Druck
-        P->>M: FINISH
-        M->>D: FINISH_PENDING
-    else Abbruch oder Fehler
-        P->>M: FAILED/CANCEL/STOPPED/ERROR oder unerwartet IDLE
-        M->>D: CANCEL_PENDING + zuletzt bekannter Fortschritt
-    end
-    M->>W: Abrechnung vormerken
-    W->>D: Gespeicherte Daten lesen, Zuordnung und Plan erstellen
-    alt Dry-Run
-        W->>D: Positionen als DRY_RUN protokollieren
-    else Echtbetrieb
-        loop Jede noch offene Buchungsposition
-            W->>D: Position atomar als IN_FLIGHT markieren
-            W->>S: Erreichbarkeit prüfen, dann PUT use_weight
-            S-->>W: Bestätigung oder Fehler
-            W->>D: DONE/RETRY/REJECTED/UNKNOWN speichern
-        end
-    end
+flowchart TD
+    Select["Rolle und Schacht wählen"] --> Preview["Vorschau: Material, Farbe, Rolle, bekanntes Profil"]
+    Preview --> Confirm["Explizit bestätigen; zeitlich begrenztes Sitzungstoken"]
+    Confirm --> Check["Fingerabdruck, alter Bestand und Schachtschutz erneut prüfen"]
+    Check --> Same{"Druckerangaben passen bereits?"}
+    Same -->|Ja| Bind["Nur diesen Schacht im Bestand binden"]
+    Same -->|Nein| Send["Einmaliger MQTT-Befehl mit QoS 0 und begrenzter Sequenz"]
+    Send --> Reply{"Befehl akzeptiert und neue passende Meldungen stabil?"}
+    Reply -->|Ja| Bind
+    Reply -->|Nein oder unklar| Stop["Fehler anzeigen; keine automatische Wiederholung"]
 ```
 
-Der MQTT-Callback führt keine Downloads oder Bestandsbuchungen aus. Diese Aufgaben übernimmt ein einzelner Hintergrund-Worker. Mehrere Vormerkungen desselben Auftrags werden innerhalb des Prozesses zusammengefasst.
+Die Vorschau ist an Sitzung, Aktion, aktuelle Rolle, vorherige Bindung und relevante Schachtdaten gebunden und gilt 120 Sekunden. Einmalkennungen und gemeinsamer Schreiblock schützen gegen Wiederholung und parallele Überschreibung. Profile und Temperaturen werden aus frischen bekannten Druckerangaben derselben Familie übernommen, nicht erfunden.
 
-## Woher stammen die Grammwerte?
+Während RUNNING/PAUSE sind aktiver und angeforderter Schacht geschützt. Unbekannte oder veraltete Zustände sperren den Schreibweg. Andere eindeutig inaktive Schächte bleiben verfügbar. Ein relevanter Rollenwechsel setzt einen dauerhaften Prüfvermerk für den Auftrag. Erst eine ausdrückliche Zuordnungsprüfung hebt ihn auf; ursprüngliche Mengenmessungen werden dadurch nicht vorgetäuscht.
 
-Der Drucker speichert die geslicte Druckdatei als 3MF-/G-Code-3MF-Archiv. Die Bridge lädt dieses Archiv per FTPS ausschließlich in den Arbeitsspeicher und liest `Metadata/slice_info.config`.
+## Verbrauchsverarbeitung
 
-| Feld | Bedeutung in der Bridge |
-|---|---|
-| `filament.id` | Slicer-Filamentnummer, beginnend bei 1 |
-| `filament.used_g` | Vom Slicer angegebener Verbrauch in Gramm |
-| `filament.color` | Slicer-Farbe für den automatischen AMS-Vergleich |
-| `filament.type` | Materialtyp, z. B. PLA oder PETG |
-| Platten-Metadatum `index` | Zuordnung zur tatsächlich gedruckten Platte |
+Der MQTT-Callback erfasst Status und legt Worker-Aufträge an; er führt keine Downloads oder Bestandsbuchungen aus. Der Hintergrundworker lädt 3MF-Metadaten der ausgewählten Platte, speichert Bestandssnapshots und sammelt beobachtete Schächte. Während RUNNING erfolgt keine Abbuchung.
 
-Die Bridge interpretiert nicht jede Extrusionsbewegung des G-Codes und misst keinen realen Filamentdurchfluss. Sie übernimmt die Slicer-Werte. Welche Materialanteile der Slicer darin bereits berücksichtigt, bestimmt die Druckdatei; Kalibrierung oder manuelles Spülen außerhalb dieser Datei werden nicht zusätzlich gemessen.
+Nach normalem Ende werden Slicer-Grammwerte verwendet; bei Abbruch werden sie mit dem letzten Fortschritt multipliziert. Fehlende Metadaten oder Zuordnungen halten den gesamten Auftrag offen. Der Plan wird vor dem ersten Buchungsversuch eingefroren. Eine Wiederholung verteilt Mengen nicht neu und bucht bestätigte Positionen nicht erneut.
 
-Bei mehreren Platten muss die Auswahl über `param=Metadata/plate_N.gcode` eindeutig sein. Die Bridge addiert nicht einfach die Gewichte aller Platten. Fehlt die Auswahl, wartet der Auftrag auf eindeutige Metadaten. Standardgrenzen: 200 MiB für das Archiv und 2 MiB für die XML-Metadaten, konfigurierbar über `MAX_3MF_BYTES` und `MAX_XML_BYTES`.
+Die Planung verwendet Hundertstelgramm. Passende AMS-Rollen werden anhand Zuordnung, beobachteter Verwendung und gespeichertem Bestand eingeplant. Rechnerische Aufteilung auf mehrere Rollen oder passende Reserven wird als Schätzung gekennzeichnet. Reserven außerhalb des Druckers erfordern weiterhin exakten gepflegten Materialtyp und Farbwert; eine breite AMS-Familie macht keine Druckparameter austauschbar. Fehlender Bestand wird nicht durch erfundene physische Wechsel erklärt.
 
-## Zwei Zuordnungen statt einer
+### Optionaler Flusszuschlag
 
-```mermaid
-flowchart LR
-    F["Slicer-Filament 1<br/>weiß, PLA, 1,25 g"] -->|"Druckstart-Auswahl oder automatische Zuordnung"| A["AMS Slot 2"]
-    A -->|"In der Weboberfläche gepflegt<br/>zum Druckstart gespeichert"| S["Spoolman-Spule #2"]
-    S --> B["1,25 g buchen"]
-```
+Die globale Option wird bei der Erkennung eines neuen Druckauftrags in `settings` unter einem auftragsbezogenen Schlüssel festgeschrieben. Alte Aufträge ohne diesen Wert erhalten keinen rückwirkenden Zuschlag. Je positiver geplanter Slicer-Filamentposition kommen 200 Hundertstelgramm hinzu, bevor die Menge auf Rollen aufgeteilt wird. Der Zuschlag ist nicht pro Reservespule und nicht pro Farbwechsel. Separate gleichfarbige Slicer-Positionen bleiben getrennt.
 
-Die [3MF- und Farbcode-FAQ](filament-workflow.md#kann-die-3mf-den-verwendeten-ams-slot-verraten) trennt Filamentnummern, Extruder-Mapping und physische AMS-Slots. Insbesondere ist `filament_maps="1 1"` in den untersuchten A1-Dateien keine Liste zweier AMS-Ports, sondern eine Zuordnung beider Filamente zum selben Extruder. Die tatsächliche Druckstart-Zuordnung ist davon getrennt.
+Bei Abbruch ist nur der Grundverbrauch fortschrittsanteilig; der Zuschlag bleibt pro positiver Position volle 2 g. Bei null positivem Grundverbrauch entfällt er. Die Erklärung steht im Schätzungshinweis des Journals. Die Option ist standardmäßig aus und startet oder erkennt keine Kalibrierung. `flow_cali` ist als Startparameter dokumentiert; daraus folgt keine bestätigte Statusbeobachtung bei einem fremd gestarteten Druck.
 
-`T0`, `T1` oder `M620 S0A` im G-Code bezeichnen nicht verlässlich die physische Slot-Auswahl, die beim Druckstart vorgenommen wird. Deshalb behandelt die Bridge Slicer-Filamentnummern und AMS-Slots getrennt. MQTT-Slots 0–3 entsprechen den sichtbaren AMS-Slots 1–4. `254` steht für die externe Spule, `255` für entladen/kein aktiver Slot. Entladen am Druckende verwirft keine gespeicherte Auftragszuordnung.
+## Buchung nach Backend
 
-Die [Verfügbarkeit der AMS-Belegung und des vollständigen Druckstart-Mappings](filament-workflow.md#kann-die-druckstart-zuordnung-separat-ausgelesen-werden) ist getrennt dokumentiert. Der lokale Statuskanal liefert nicht automatisch den Inhalt des Druckstart-Auftrags.
+### Internes Inventar
 
-Die Zuordnung wird in dieser Reihenfolge ermittelt:
+SQLite-Transaktionen aktualisieren Restbestand, `consumption_entries`, `inventory_movements` und den bisherigen Buchungsstatus zusammen. Eindeutige Operations- und Quellkennungen verhindern Doppelbuchungen. Bekannter unzureichender Bestand führt zu einer Ablehnung. Der Offline-Umschaltmarker schützt historische Aufträge vor erneuter Belastung. Es gibt keinen automatischen Rückfall auf Spoolman.
 
-1. Ausdrücklich für den Auftrag bestätigte Zuordnung. Spätere MQTT-Meldungen überschreiben sie nicht.
-2. Vom Drucker gelieferte `ams_mapping`-/`ams_mapping2`-Daten, sofern vorhanden.
-3. Bei `AUTO_MATCH_FILAMENTS=true`: exakte RGB-Farbe und exakter Materialtyp aus den Slicer-Metadaten gegen den gespeicherten AMS-Bestand.
+Neue Restbestände aus Verbrauch und Korrekturen werden auf zwei Nachkommastellen gerundet. Die Darstellung der AMS-Auswahl verwendet eine Nachkommastelle. Historische Buchungen werden nicht nachträglich gerundet oder neu geschrieben.
 
-Es gibt keine Suche nach einer nur ähnlichen Farbe. Die automatische Zuordnung setzt voraus, dass beim Druckstart keine absichtlich abweichende AMS-Farbe gewählt wird. Die externe Spule benötigt eine explizite Zuordnung. MQTT-Deltas erhalten bereits bekannte Attribute, statt fehlende Felder durch Standardwerte zu ersetzen.
+### Externes Spoolman
 
-### Diagnose bei abweichenden Slicer-Farben
+Die REST-Verbrauchs-API bietet hier keine anwendungsseitige Idempotenzkennung. Sichere Fehler vor einer Buchung können erneut geprüft werden; unklare Ergebnisse nach möglichem Schreiben werden UNKNOWN und nicht automatisch wiederholt. Der Plan bleibt erhalten. Die eingebauten Inventar-Editoren sind in dieser Betriebsart nicht schreibend aktiviert.
 
-Vertauschte Modellfarben sind grundsätzlich zulässig. Entscheidend sind jedoch die gespeicherten RGB-Werte, nicht nur Farbnamen wie „Grün“. Beispielsweise ist Slicer-PLA `#80FF80` kein exakter Treffer für AMS-PLA `#104831`. Weiß kann dabei korrekt erkannt werden, während Grün offenbleibt. Der gesamte Auftrag wartet dann, damit keine Teilabbuchung erfolgt.
+## Gemeinsames Journal und Historie
 
-Das Journal und die Auftragsanzeige nennen die konkret nicht passende Slicer-Farbe und das Material. Im Zuordnungsformular werden außerdem die gespeicherten AMS-Farben angezeigt. Eindeutig erkannte Slots sind bereits vorausgewählt. Eine Bestätigung für einen einzelnen Auftrag wird nicht stillschweigend als dauerhaft gültige Farbzuordnung auf spätere Drucke übertragen.
+Die Anzeige vereinigt Verbrauchspositionen mit manuellen `inventory_movements` vom Typ adjustment. Das erzeugt keine zusätzlichen Verbrauchspositionen und keine doppelte Bewegung. Korrekturen zeigen Vorher/Nachher, Grund und gegebenenfalls Gesamt-/Leerspulengewicht. Datum und Uhrzeit werden gemeinsam dargestellt.
 
-Die Zuordnung **AMS-Slot → Spoolman-Spule** muss beim Spulenwechsel zwischen Drucken aktualisiert werden. Der Auftrag behält seinen gespeicherten Stand; spätere Änderungen leiten bereits geplante oder versuchte Buchungen nicht auf eine neue Spule um.
+Archivieren erhält aktive Referenzen. „Aus Inventar entfernen“ setzt bei archivierten Rollen einen Entfernungszeitpunkt; die Rolle verschwindet aus operativen Ansichten, historische IDs und Buchungen bleiben bestehen. Aktuelle Schachtbindungen und offene Aufträge verhindern das Entfernen. Andere Rollen desselben Produkts sind unabhängig.
 
-## Gleichartige Spulen, Auto-Refill und Reserven
+## Geräte und automatische Abschaltung
 
-Wenn mehrere eingelegte Spulen zur gleichen Farbe und zum gleichen Material passen, werden ausdrücklich zugeordnete und während des Druckens beobachtete Slots bevorzugt. Sonst verwendet die Bridge das kleinste positive gespeicherte Restgewicht zuerst. Die Beobachtung erfolgt anhand aktiver Slots während einer gemeldeten Druckphase mit positivem Layer-Zähler.
+Lichtaktionen erfordern eine neue passende `lights_report`-Meldung. Erfolgreicher MQTT-Versand allein reicht nicht. Lichtstatus bestimmt nicht, ob ein Druck aktiv ist.
 
-Die Aufteilung erfolgt in Hundertstelgramm. Bereits im selben Auftrag reservierte Mengen werden abgezogen, damit zwei Slicer-Filamente nicht dieselben 30 g Restbestand doppelt verplanen.
+Manuelles Ausschalten setzt verbundenen Drucker und explizites IDLE/FINISH mit höchstens 30 Sekunden alten Daten voraus. Veraltete Daten werden neu angefordert; der Tapo-Prozess prüft unmittelbar vor dem Schalten erneut.
 
-| Beispiel: 100 g Gesamtverbrauch | Gespeicherter Restbestand | Geplante Buchung |
-|---|---:|---:|
-| Erste passende Spule | 30 g | 30 g |
-| Zweite passende Spule | 100 g | 70 g |
+Die automatische Abschaltung ist eine zusätzliche, standardmäßig deaktivierte pro-Auftrag-Option. Sie wartet auf normales Ende, erfolgreich erledigte Buchung und 60/120/180 Sekunden Verzögerung. Eine neue Statusanforderung und eine finale Prüfung desselben Auftrags und der weiterhin aktivierten Option gehen dem Schalten voraus. Neuer Druck, Abbruch, unklarer Ausgang oder Neustart während des Schaltversuchs verhindern Wiederholungen. Sie kontrolliert keine Temperatur.
 
-Reichen die passenden AMS-Spulen nicht, werden weitere nicht archivierte Spoolman-Spulen mit exakt derselben Farbe und demselben Material wie das primäre **Spoolman-Filament** einbezogen. Das ist ein eigener Vergleich: Die primäre Slicer→AMS-Zuordnung verwendet die Druckerfarben, die Reservensuche die gepflegten Spoolman-Filamentdaten.
+## Sicherungen und Prüfbarkeit
 
-Eine reine Spoolman-Reserve hat keinen bestätigten AMS-Slot. Im Journal steht dann „—“ als Schacht, und die rechnerische Verwendung wird ausdrücklich als unbestätigte Schätzung vermerkt. Sind alle passenden Bestände rechnerisch verbraucht, wird die verbleibende Differenz der letzten passenden Spule belastet und gekennzeichnet.
+SQLite-Backup-API für eine konsistente laufende Kopie verwenden; laufende Hauptdatei nicht ohne WAL-/SHM-Beachtung kopieren. Vollbackup umfasst zusätzlich private Konfiguration, kompletten Quellstand, Containerdefinition und vorheriges Image. Testimport und Migration erfolgen nur mit separater Kopie und gestopptem produktivem Schreiber.
 
-**Diese Logik ist eine Bestandsaufteilung, keine Messung des tatsächlichen Wechselzeitpunkts.** Auto-Refill muss am Drucker separat eingerichtet sein. Die Bridge schaltet es nicht ein und legt keine Reservespule physisch ein.
+Native JSON-Exporte erhalten Inventarhistorie und relevante Auftragsprüfvermerke, aktivieren aber keine automatische Abschaltung beim Restore. Vollständige SQLite-Sicherungen enthalten auch Laufzeitzustände. Vor Freigabe nach Wiederherstellung offene Aufträge, Betriebsmodus und Abschaltoption prüfen.
 
-## Abbruchschätzung
-
-Für Abbrüche gilt pro Slicer-Filament:
-
-```text
-Geschätzter Verbrauch = vollständige Slicer-Grammzahl × letzter Fortschritt / 100
-```
-
-Bei 100 g und 40 % werden 40 g geschätzt. Wenn die Abbruchmeldung ihren Fortschritt auf 0 zurücksetzt, bleibt der zuvor gespeicherte höhere Fortschritt erhalten. Dieselbe gespeicherte Fortschrittszahl wird auf alle Slicer-Filamente angewendet; diese Verteilung kann vom tatsächlichen Materialverbrauch abweichen. Bei 0 % entsteht keine positive Buchung, auch wenn bereits Spülmaterial verbraucht worden sein kann.
-
-Das Journal ergänzt den Status um **SCHÄTZUNG** und nennt die Berechnungsbasis in den Details. Die gewichtsbasierte Spulenaufteilung wird ebenso gekennzeichnet.
-
-## Buchungsjournal und Fehlerbehandlung
-
-| Zustand einer Position | Verhalten |
-|---|---|
-| `UNMAPPED` | Notwendige Zuordnung oder Restgewichte fehlen. Der gesamte Auftrag wartet; noch keine Teilposition wird gebucht. |
-| `PENDING` | Position steht im gespeicherten Plan zur Buchung bereit. |
-| `IN_FLIGHT` | Die Position ist atomar für einen API-Versuch reserviert. |
-| `DONE` | Spoolman hat die Buchung bestätigt. Details: „Buchung durch Spoolman bestätigt“. |
-| `RETRY` | Sicherer Wiederholungsfall, z. B. Spoolman vor der Buchung nicht erreichbar oder Verbindungsaufbau-Timeout. |
-| `REJECTED` | Spoolman hat die Anfrage abgelehnt; Details enthalten den Fehler. |
-| `UNKNOWN` | Der Ausgang ist unklar, etwa nach Antwortverlust, HTTP 5xx oder Neustart während einer laufenden Anfrage. Keine automatische Wiederholung. |
-| `DRY_RUN` | Simulation ohne Spoolman-Abbuchung. Auch nach späterem Moduswechsel keine automatische Nachbuchung. |
-
-Die Spoolman-Verbrauchs-API hat keine von dieser Bridge verwendete Idempotenzkennung. Bei unklarem Ausgang wäre eine Wiederholung möglicherweise eine Doppelbuchung. Deshalb ist `UNKNOWN` ein bewusst offener Prüfzustand. Der Buchungsplan bleibt nach dem ersten API-Versuch unverändert; erfolgreiche Teilpositionen werden bei der Wiederaufnahme nicht erneut gebucht. Bei Neustart werden noch als `IN_FLIGHT` gespeicherte Positionen zu `UNKNOWN`.
-
-Ältere erfolgreiche `HTTP 200`-Einträge werden in der Oberfläche ebenfalls verständlich dargestellt. Ihre ursprünglichen gespeicherten Audit-Details werden dabei nicht umgeschrieben. Technische Fehlercodes bleiben für die Fehlersuche erhalten.
-
-## Betrieb, Persistenz und Weboberfläche
-
-- `bridge.sqlite3`: Aufträge, Buchungspositionen, Fortschritt, Bestands-Snapshots und Sitzungsschlüssel.
-- `mapping.json`: aktuelle Zuordnung der AMS-Slots und der externen Spule zu Spoolman-Spulen.
-- Begrenzter Log-Puffer in der Oberfläche und Docker-Log-Rotation verhindern unbegrenzt wachsende Laufzeitlogs.
-- Ein Healthcheck prüft die Anwendung; der separate Spoolman-Status zeigt die API-Erreichbarkeit.
-- Manuelle Buchungen und automatische Buchungen verwenden denselben Worker und denselben aktiven Dry-Run-/Echtbetrieb-Modus.
-- Formulare haben eine CSRF-Prüfung. Der persistente Sitzungsschlüssel übersteht Container-Neustarts. Optional können Web-Benutzername und Passwort gesetzt werden.
-- Das SSH-Deployment baut vor dem Stoppen, sichert den vorhandenen Stand und verweigert Updates während eines erkannten laufenden oder pausierten Drucks. Der bestehende Spoolman wird nicht neu installiert oder ersetzt.
-
-Konfiguration und Startbefehle: [README](../README.md). Versionshistorie: [Changelog](../CHANGELOG.md). Betriebsfreigabe: [Deployment-Protokoll](../DEPLOYMENT.md).
+[Hardwarestand und Tests](../DEPLOYMENT.md) · [Kommunikationsdiagramm](flows/communication.md) · [Verarbeitungsdiagramm](flows/processing.md).

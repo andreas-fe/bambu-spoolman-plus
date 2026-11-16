@@ -1,6 +1,6 @@
 """Additive SQLite schema for the integrated inventory.
 
-Migrations only add tables and never rewrite the legacy jobs/deductions ledger.
+Migrations add tables or columns and never rewrite the legacy jobs/deductions ledger.
 The internal backend additionally requires an explicit offline cutover marker.
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 
 def _now() -> str:
@@ -202,6 +202,15 @@ def apply_migrations(path: str | Path) -> int:
                 db.execute("CREATE TABLE inventory_job_plans (job_id TEXT PRIMARY KEY, plan_json TEXT NOT NULL, created_at TEXT NOT NULL)")
                 db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(2,?)", (_now(),))
                 current = 2
+            if current < 3:
+                db.execute("ALTER TABLE filaments ADD COLUMN empty_spool_weight_g REAL CHECK(empty_spool_weight_g IS NULL OR empty_spool_weight_g >= 0)")
+                db.execute("ALTER TABLE filaments ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+                db.execute("INSERT INTO schema_migrations(version,applied_at) VALUES(3,?)", (_now(),))
+                current = 3
+            if current < 4:
+                db.execute('ALTER TABLE spools ADD COLUMN removed_at TEXT')
+                db.execute('INSERT INTO schema_migrations(version,applied_at) VALUES(4,?)', (_now(),))
+                current = 4
             if current > SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Datenbankschema {current} ist neuer als diese Anwendung ({SCHEMA_VERSION})."

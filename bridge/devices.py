@@ -106,14 +106,17 @@ class TapoSwitch:
             result['observed_at'] = time.time()
         return result
 
-    def run(self, action=None, guard=None):
+    def run(self, action=None, guard=None, expected_job_id=None):
         if action is False and (guard is None or not guard()):
             raise ShutdownBlocked('Abschalten wegen Druckerstatus gesperrt.')
         # Rust extensions can abort the interpreter on incompatible device data.
         # Keep their entire lifecycle outside Flask and the inventory worker.
+        worker_env=None
+        if expected_job_id:
+            worker_env=dict(os.environ,AUTO_OFF_JOB_ID=expected_job_id)
         result = subprocess.run([sys.executable, '-m', 'bridge.tapo_worker'],
                                 input=json.dumps({'action': action}), capture_output=True,
-                                text=True, timeout=25, check=False)
+                                text=True, timeout=25, check=False,env=worker_env)
         if result.returncode == 3:
             raise ShutdownBlocked('Der Drucker hat keinen sicheren Leerlauf bestätigt.')
         if result.returncode != 0:
@@ -132,7 +135,7 @@ def safe_to_power_off(printer):
     return printer.get('state') in ('IDLE', 'FINISH') and 0 <= time.time() - printer.get('state_seen_at', 0) <= 30
 
 
-def register_devices(app, host, access_code, printer, light_control=None, refresh_printer=None):
+def register_devices(app, host, access_code, printer, light_control=None, refresh_printer=None, shutdown_job_guard=None):
     bp = Blueprint('devices', __name__)
     camera_lock, switch_lock = threading.Lock(), threading.Lock()
     switch = TapoSwitch()
@@ -158,6 +161,9 @@ def register_devices(app, host, access_code, printer, light_control=None, refres
     def shutdown_status():
         # The isolated switch process rechecks immediately before off().
         safe = confirmed_idle()
+        job_id=request.args.get('job_id')
+        if job_id:
+            safe=safe and bool(shutdown_job_guard and shutdown_job_guard(job_id))
         return jsonify(safe=safe, state=printer.get('state'), state_seen_at=printer.get('state_seen_at'))
 
     @bp.post('/devices/light')

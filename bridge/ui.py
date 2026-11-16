@@ -68,6 +68,13 @@ main{max-width:1240px;margin:auto;padding:30px 24px 64px}
 .subtabs button[aria-selected=true]{background:var(--raised);color:var(--text);box-shadow:0 2px 8px #0003}
 .subtabs .count{padding:1px 7px;border-radius:6px;background:#ffffff12;font-size:12px}
 .scroll{overflow:auto}
+.inventory-table{table-layout:fixed;min-width:0}
+.inventory-table th,.inventory-table td{overflow-wrap:anywhere;white-space:normal}
+.inventory-table th button{white-space:normal;max-width:100%;padding:5px}
+.inventory-table th:last-child,.inventory-table td.row-actions{width:150px;position:sticky;right:0;background:var(--surface);z-index:1}
+.inventory-table .notes-cell{max-width:150px}
+.notes-text{max-height:110px;overflow:auto;overflow-wrap:anywhere;white-space:pre-wrap}
+.inventory-table .row-actions button{margin:3px 0;max-width:100%;white-space:normal}
 table{border-collapse:collapse;width:100%;font-size:14px}
 th,td{text-align:left;padding:13px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
 th{font-size:12px;font-weight:650;color:var(--muted);white-space:nowrap}
@@ -105,6 +112,7 @@ tbody tr:last-child td{border-bottom:0}
 .setting strong{display:block}
 .setting small{display:block;margin-top:4px;max-width:65ch}
 .setting:last-of-type{border:0}
+.printer-heading{display:grid!important;grid-template-columns:minmax(0,1fr) auto 190px;gap:18px}.printer-illustration svg{width:100%;max-height:190px;display:block}.printer-illustration .printer-print-line{opacity:.45}.printer-illustration.printing .printer-print-line{opacity:1;animation:filament-flow 2s linear infinite}@keyframes filament-flow{to{stroke-dashoffset:-16}}@media(prefers-reduced-motion:reduce){.printer-illustration.printing .printer-print-line{animation:none}}@media(max-width:760px){.printer-heading{grid-template-columns:minmax(0,1fr) 120px}.printer-heading>div:nth-child(2){grid-column:1/-1;grid-row:2}.printer-illustration{grid-column:2;grid-row:1}}
 .status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;background:#111d2a;border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:22px}
 .status>div{display:flex;flex-wrap:wrap;align-items:center;gap:7px}
 .status>div>.muted{display:block;width:100%;font-size:12px}
@@ -176,7 +184,7 @@ def render_ui(template, *, active, title, **context):
                                   navigation=NAVIGATION, active=active, title=title)
 
 
-SETTINGS_PAGE = '''<div class="page-heading"><div><div class="eyebrow">Deine Einstellungen</div><h1>Betrieb & Zuordnung</h1><p>Lege fest, wie Verbräuche gebucht und Spulen zugeordnet werden.</p></div><span class="badge {{'good' if not dry_run else ''}}">{{'Simulation' if dry_run else 'Echtbetrieb'}}</span></div>{% if saved %}<div class="notice success" role="status">Einstellungen gespeichert.</div>{% endif %}<section class="panel settings-width"><h2>Verbrauchserfassung</h2><form method="post"><input type="hidden" name="csrf_token" value="{{token}}"><label class="setting"><input type="checkbox" name="dry_run" role="switch" {% if dry_run %}checked{% endif %}><span><strong>Verbräuche nur simulieren</strong><small>Bei aktiver Simulation bleibt der Bestand unverändert. Bereits simulierte Drucke werden später nicht nachgebucht.</small></span></label><label class="setting"><input type="checkbox" name="auto_match" role="switch" {% if auto_match %}checked{% endif %}><span><strong>Passende Spulen automatisch finden</strong><small>Farbe und Material helfen dabei, die Spule einem Druck zuzuordnen. Die AMS-Zuordnung kannst du auf der Übersicht anpassen.</small></span></label><div class="form-actions"><button>Einstellungen speichern</button></div></form></section><section class="panel settings-width"><h2>Bestandsverwaltung</h2><p>{{'Dein Filamentbestand wird direkt in dieser App verwaltet.' if backend=='internal' else 'Dein Filamentbestand wird über Spoolman verwaltet.'}}</p><p class="muted small">Gerätezugänge werden über die geschützte Serverkonfiguration bereitgestellt.</p></section>'''
+SETTINGS_PAGE = '''<div class="page-heading"><div><div class="eyebrow">Deine Einstellungen</div><h1>Betrieb & Zuordnung</h1><p>Lege fest, wie Verbräuche gebucht und Spulen zugeordnet werden.</p></div><span class="badge {{'good' if not dry_run else ''}}">{{'Simulation' if dry_run else 'Echtbetrieb'}}</span></div>{% if saved %}<div class="notice success" role="status">Einstellungen gespeichert.</div>{% endif %}<section class="panel settings-width"><h2>Verbrauchserfassung</h2><form method="post"><input type="hidden" name="csrf_token" value="{{token}}"><label class="setting"><input type="checkbox" name="dry_run" role="switch" {% if dry_run %}checked{% endif %}><span><strong>Verbräuche nur simulieren</strong><small>Bei aktiver Simulation bleibt der Bestand unverändert. Bereits simulierte Drucke werden später nicht nachgebucht.</small></span></label><label class="setting"><input type="checkbox" name="auto_match" role="switch" {% if auto_match %}checked{% endif %}><span><strong>Passende Spulen automatisch finden</strong><small>Farbe und Material helfen dabei, die Spule einem Druck zuzuordnen. Die AMS-Zuordnung kannst du auf der Übersicht anpassen.</small></span></label><label class="setting"><input type="checkbox" name="flow_allowance" role="switch" {% if flow_allowance %}checked{% endif %}><span><strong>Flusskontrolle berücksichtigen · 2 g je Farbe</strong><small>Pauschaler Zusatzverbrauch als Schätzung im Journal. Gilt für neu erkannte Druckaufträge; während eines Drucks bleibt dessen Einstellung erhalten. Die Option startet keine Kalibrierung am Drucker. Nur aktivieren, wenn dieser Verbrauch zusätzlich anfällt.</small></span></label><div class="form-actions"><button>Einstellungen speichern</button></div></form></section><section class="panel settings-width"><h2>Bestandsverwaltung</h2><p>{{'Dein Filamentbestand wird direkt in dieser App verwaltet.' if backend=='internal' else 'Dein Filamentbestand wird über Spoolman verwaltet.'}}</p><p class="muted small">Gerätezugänge werden über die geschützte Serverkonfiguration bereitgestellt.</p></section>'''
 
 
 

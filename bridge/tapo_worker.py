@@ -11,7 +11,9 @@ from .devices import TapoSwitch, ShutdownBlocked
 def printer_is_safe():
     # Recheck the live parent state after get_device_info, just before off().
     port = int(os.getenv('WEB_PORT', '7913'))
-    request = urllib.request.Request(f'http://127.0.0.1:{port}/api/printer/shutdown-status')
+    from urllib.parse import urlencode
+    query='?'+urlencode({'job_id':os.environ['AUTO_OFF_JOB_ID']}) if os.getenv('AUTO_OFF_JOB_ID') else ''
+    request = urllib.request.Request(f'http://127.0.0.1:{port}/api/printer/shutdown-status'+query)
     username, password = os.getenv('WEB_USERNAME', ''), os.getenv('WEB_PASSWORD', '')
     if username:
         request.add_header('Authorization', 'Basic ' + base64.b64encode((username+':'+password).encode()).decode())

@@ -13,8 +13,16 @@ from bridge.inventory_db import apply_migrations, connection as inventory_connec
 from bridge.inventory_service import InventoryService, InventoryError
 from bridge.inventory_api import register_inventory, spoolman_view
 from bridge.devices import register_devices
-from bridge.printer_telemetry import PrinterTelemetry
+from bridge.printer_telemetry import PrinterTelemetry, AMSCommandRejected
 from bridge.ui import render_ui, SETTINGS_PAGE
+from bridge.ams_ui import AMS_PANEL
+from bridge.device_visuals import A1_VISUAL
+from bridge.materials import materials_match, material_family, MATERIAL_FAMILY_PATTERN
+from bridge.ams_control import filament_payload, slot_write_reason
+from bridge.ams_selection import selection_fingerprint, spool_matches
+from bridge.auto_power import AutoPowerOff
+from itsdangerous import URLSafeTimedSerializer, BadSignature
+import hashlib
 
 import ftplib
 import io
@@ -36,6 +44,7 @@ from contextlib import contextmanager
 import xml.etree.ElementTree as ET
 from collections import deque
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -93,10 +102,10 @@ class BufferLogHandler(logging.Handler):
 logger = logging.getLogger("bambu_spoolman_bridge")
 logger.setLevel(logging.INFO)
 _console = logging.StreamHandler()
-_console.setFormatter(logging.Formatter("[Bridge] %(asctime)s %(levelname)s: %(message)s", "%H:%M:%S"))
+_console.setFormatter(logging.Formatter("[Bridge] %(asctime)s %(levelname)s: %(message)s", "%d.%m.%Y %H:%M:%S"))
 logger.addHandler(_console)
 _buffer = BufferLogHandler()
-_buffer.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", "%H:%M:%S"))
+_buffer.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s", "%d.%m.%Y %H:%M:%S"))
 logger.addHandler(_buffer)
 
 def log(message: str, level: int = logging.INFO) -> None:
@@ -227,6 +236,9 @@ class Store:
                 con.execute('UPDATE jobs SET slot_mapping_json=?, dry_run=?, ams_snapshot_json=?, mapping_source=? WHERE id=?',
                             (json.dumps(load_mapping()), int(DRY_RUN), json.dumps(ams_state),
                              'MQTT' if ams_mapping is not None or ams_mapping2 is not None else '', job_id))
+                option = con.execute("SELECT value_json FROM settings WHERE key='flow_calibration_allowance'").fetchone()
+                con.execute("INSERT INTO settings(key,value_json,updated_at) VALUES (?,?,?)",
+                            ('flow_allowance_job:'+job_id, option['value_json'] if option else 'false', now))
                 con.execute("UPDATE runtime SET value=? WHERE key='active_job_id'", (job_id,))
                 log(f"Neuer Druckauftrag: {filename or subtask_name or job_id}")
             else:
@@ -367,6 +379,13 @@ class Store:
                 return False
             if con.execute("SELECT 1 FROM deductions WHERE job_id=? AND (status NOT IN ('UNMAPPED','PENDING') OR attempts>0)", (job_id,)).fetchone():
                 return False
+            guard=con.execute('SELECT value FROM runtime WHERE key=?',('ams-job-review:'+job_id,)).fetchone()
+            if guard:
+                slots=json.loads(job['slot_mapping_json'] or '{}')
+                for slot,change in json.loads(guard['value']).items():
+                    slots[slot]=change['after']
+                con.execute('UPDATE jobs SET slot_mapping_json=?,error=?,estimated=1,estimate_reason=? WHERE id=?',(json.dumps(slots),'','Rollenwechsel während Druck: manuell bestätigte Zuordnung; rollenbezogene Teilmengen nicht gemessen.',job_id))
+                con.execute('DELETE FROM runtime WHERE key=?',('ams-job-review:'+job_id,))
             con.execute('DELETE FROM deductions WHERE job_id=?', (job_id,))
             con.execute("UPDATE jobs SET ams_mapping_json=?, ams_mapping2_json=NULL, mapping_source='USER', updated_at=? WHERE id=?",
                         (json.dumps(mapping), self.now(), job_id))
@@ -396,12 +415,40 @@ class Store:
         with self.connection() as con:
             rows = [dict(r) for r in con.execute(
                 "SELECT d.*, j.filename, j.subtask_name, j.created_at AS job_created_at, j.mapping_source, j.estimated "
-                "FROM deductions d JOIN jobs j ON j.id=d.job_id ORDER BY d.id DESC LIMIT ?", (limit,)
+                ", j.cancelled, j.progress AS job_progress, j.estimate_reason FROM deductions d JOIN jobs j ON j.id=d.job_id ORDER BY d.id DESC LIMIT ?", (limit,)
             ).fetchall()]
         for row in rows:
             if row['status'] == 'DONE':
                 row['detail'] = re.sub(r'^HTTP 2\d\d(?=;|$)', 'Buchung durch Spoolman bestätigt', row['detail'])
-        return rows
+                if row['cancelled']:
+                    row['detail'] = f"Teilmenge bis Abbruch gebucht (Schätzung bei {row['job_progress']:g}% Fortschritt). " + row['detail']
+            elif row['cancelled']:
+                row['detail'] = 'Abgebrochener Druck · geschätzte Teilmenge. ' + row['detail']
+        # Inventory corrections belong in the visible journal, but never in
+        # consumption totals or the deduction worker's executable queue.
+        with self.connection() as con:
+            corrections = con.execute("SELECT * FROM inventory_movements WHERE movement_type='adjustment' ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
+        for correction in corrections:
+            data=dict(correction);before=data['before_weight_g'];after=data['after_weight_g'];note=data['note'] or ''
+            weighed=note.startswith('Wiegekorrektur: ')
+            title='Wiegekorrektur' if weighed else 'Bestandskorrektur'
+            previous='unbekannt' if before is None else f'{before:g} g'
+            current='unbekannt' if after is None else f'{after:g} g'
+            detail=f'Bestand vorher: {previous}; danach: {current}.'
+            if weighed:
+                try:
+                    measured=json.loads(note.removeprefix('Wiegekorrektur: '))
+                    detail=f"Gewogen: {measured['gross_g']:g} g − Leerspule: {measured['tare_g']:g} g. "+detail
+                    if measured.get('note'): detail+=' '+measured['note']
+                except (ValueError,KeyError,TypeError):
+                    detail+=' '+note
+            elif note:
+                detail+=' '+note
+            rows.append(dict(id='adjustment:'+str(data['id']),entry_type='adjustment',created_at=data['created_at'],job_created_at=data['created_at'],
+                             job_id='adjustment:'+str(data['id']),filename=title,subtask_name=title,tray_id=None,spool_id=data['spool_id'],
+                             grams=data['delta_g'],amount_label=(current+' Bestand') if weighed else f"{data['delta_g']:+g} g",
+                             status='CORRECTED',status_label='Korrigiert',estimated=0,cancelled=0,detail=detail))
+        return sorted(rows,key=lambda row:(row['created_at'],str(row['id'])),reverse=True)[:limit]
 
     def recoverable_jobs(self) -> list[str]:
         with self.connection() as con:
@@ -710,7 +757,10 @@ def book_pending(job_id: str) -> None:
             log(f"[DRY-RUN] {row['grams']}g von Spule #{row['spool_id']}")
         elif INVENTORY_BACKEND == 'internal':
             try:
-                inventory_service.apply_ledger_deduction(row['id'])
+                result = inventory_service.apply_ledger_deduction(row['id'])
+                if result.get('applied'):
+                    label = 'Teilmenge bis Abbruch gebucht (Schätzung)' if job.get('cancelled') else 'Verbrauch gebucht'
+                    log(f"{label}: {row['grams']:g} g, Spule #{row['spool_id']}.")
             except InventoryError as exc:
                 store.set_deduction_status(row['id'], 'REJECTED', str(exc))
                 log(f"Interne Buchung abgelehnt: {exc}", logging.WARNING)
@@ -751,6 +801,9 @@ def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, sto
     for filament_id, original in sorted(weights.items()):
         total = round(original * factor * 100)
         if total <= 0: continue
+        if job.get('flow_calibration_allowance'):
+            total += 200
+            reasons.append('Flusskontrolle: pauschal 2 g je verwendeter Filamentfarbe zusätzlich (Schätzung)')
         filament = filaments.get(str(filament_id), {})
         primary = resolve_tray_for_filament(filament_id, raw, raw2)
         candidates = []
@@ -762,7 +815,7 @@ def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, sto
                 tray = inventory.get(str(slot), {})
                 if (tray.get('available') is True and normalized_color(filament.get('color'))
                         and normalized_color(tray.get('color')) == normalized_color(filament.get('color'))
-                        and str(tray.get('material') or '').strip().upper() == str(filament.get('material') or '').strip().upper()):
+                        and materials_match(tray.get('material'), filament.get('material'))):
                     if slot not in candidates: candidates.append(slot)
             if primary is None and candidates: sources.add('AUTO_COLOR_MATERIAL')
         matched_slots = list(candidates)
@@ -869,6 +922,11 @@ def process_job(job_id: str) -> None:
             store.update_job(job_id, weights_json=json.dumps(weights), filaments_json=json.dumps(filaments))
     # Start workers capture metadata and stock only; they never deduct during printing.
     if job['state'] == 'RUNNING': return
+    with inventory_connection(DB_PATH) as db:
+        needs_review=db.execute('SELECT 1 FROM runtime WHERE key=?',('ams-job-review:'+job_id,)).fetchone()
+    if needs_review:
+        store.update_job(job_id,state='WAITING_MAPPING',error='Bestandsrolle in einem für diesen Druck relevanten Schacht während des Drucks geändert. Bitte die Zuordnung für diesen Auftrag prüfen und bestätigen; noch keine Abbuchung.')
+        return
     if not weights:
         store.update_job(job_id, state='WAITING_METADATA', error='Warte auf eindeutige 3MF-Verbrauchsdaten.')
         return
@@ -878,7 +936,12 @@ def process_job(job_id: str) -> None:
     slots = json.loads(job.get('slot_mapping_json') or json.dumps(load_mapping()))
     if not job.get('slot_mapping_json'): store.update_job(job_id, slot_mapping_json=json.dumps(slots))
     stock = json.loads(job.get('spools_snapshot_json') or '{}')
+    with inventory_connection(DB_PATH) as db:
+        allowance = db.execute('SELECT value_json FROM settings WHERE key=?', ('flow_allowance_job:'+job_id,)).fetchone()
+    job['flow_calibration_allowance'] = bool(allowance and json.loads(allowance['value_json']) is True)
     rows, source, reason = plan_consumption(job, weights, filaments, slots, stock)
+    if 'Rollenwechsel während Druck' in (job.get('estimate_reason') or ''):
+        reason=(reason+'; ' if reason else '')+job['estimate_reason']
     store.update_job(job_id, mapping_source=source or job.get('mapping_source',''), estimated=int(bool(reason)), estimate_reason=reason)
     if not rows:
         store.update_job(job_id, state='CANCELLED_ZERO' if job.get('cancelled') else 'REJECTED', error=reason or 'Keine positive Verbrauchsmenge.')
@@ -934,6 +997,33 @@ def send_pushall(client):
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
         raise ConnectionError("MQTT-Statusabfrage abgewiesen.")
 
+def record_ams_changes():
+    """Release stale current assignments, never modify captured print snapshots."""
+    if INVENTORY_BACKEND != 'internal':
+        return
+    key = 'ams_fingerprints:' + SERIAL
+    with inventory_connection(DB_PATH) as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT value FROM runtime WHERE key=?', (key,)).fetchone()
+        previous = json.loads(row['value']) if row and row['value'] else {}
+        current = dict(previous)
+        changed = []
+        for slot, tray in ams_state.items():
+            if not tray.get('known'):
+                continue
+            signature = [bool(tray.get('available')), str(tray.get('material') or '').upper(), normalized_color(tray.get('color'))]
+            name = str(slot)
+            if name in previous and previous[name] != signature:
+                db.execute('UPDATE ams_assignments SET released_at=? WHERE printer_id=? AND slot_id=? AND released_at IS NULL', (store.now(), SERIAL, name))
+                changed.append(slot)
+            current[name] = signature
+        if current != previous:
+            db.execute('INSERT INTO runtime(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key,json.dumps(current)))
+        db.commit()
+    for slot in changed:
+        log(f'AMS Slot {slot+1}: Wechsel von Material/Farbe oder Belegung erkannt. Spule für künftige Aufträge neu zuordnen.', logging.WARNING)
+
+
 def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload.decode("utf-8"))
@@ -941,6 +1031,7 @@ def on_message(client, userdata, msg):
         if not p: return
 
         state, filename, subtask, ams_map, ams_map2 = telemetry.update(p, normalized_color)
+        record_ams_changes()
 
         if state in ("RUNNING", "PREPARE"):
             previous = store.active_job_id()
@@ -949,6 +1040,8 @@ def on_message(client, userdata, msg):
                 if 'mc_percent' not in p: printer_status['progress'] = 0
                 if 'layer_num' not in p: printer_status['layer'] = 0
                 if 'stg_cur' not in p: printer_status['stage'] = None
+                if 'mc_remaining_time' not in p:
+                    printer_status.update(remaining_minutes=None, remaining_seen_at=0)
                 enqueue_job(started)
         # Mapping and file metadata can arrive in MQTT delta messages without a state.
         active_id = store.active_job_id()
@@ -993,6 +1086,33 @@ def on_message(client, userdata, msg):
 # ---------------------------------------------------------------------------
 
 app = Flask(__name__)
+
+
+@app.template_filter('date_time')
+def display_date_time(value):
+    if not value:
+        return '—'
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(ZoneInfo('Europe/Berlin')).strftime('%d.%m.%Y %H:%M:%S')
+    except (ValueError, TypeError):
+        return value
+@app.template_filter('remaining_time')
+def display_remaining_time(printer):
+    if printer.get('state') == 'FINISH':
+        return 'Abgeschlossen'
+    if printer.get('state') not in ('RUNNING','PREPARE','PAUSE'):
+        return '—'
+    minutes = printer.get('remaining_minutes')
+    if minutes is None or not 0 <= time.time()-printer.get('remaining_seen_at',0) <= 180:
+        return 'Warte auf Zeitangabe'
+    hours,rest = divmod(int(minutes),60)
+    text = f'{hours} Std. {rest} Min.' if hours else f'{rest} Min.' if rest else '< 1 Min.'
+    return ('Pausiert · noch ' if printer.get('state')=='PAUSE' else 'ca. ') + text
+
+
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or store.session_secret()
 register_inventory(app, DB_PATH, INVENTORY_BACKEND == "internal")
 def set_printer_light(action):
@@ -1025,7 +1145,269 @@ def refresh_printer_status():
     return telemetry.wait_for_state(sequence, timeout=6)
 
 
-register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status)
+register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,
+                 shutdown_job_guard=lambda job_id:auto_power.permitted(job_id))
+
+
+def auto_power_safe(fresh=False):
+    from bridge.devices import safe_to_power_off
+    if INVENTORY_BACKEND!='internal' or DRY_RUN or not mqtt_client or not mqtt_client.is_connected():
+        return False
+    if fresh:
+        sequence=telemetry.state_sequence
+        send_pushall(mqtt_client)
+        if not telemetry.wait_for_state(sequence,timeout=6):return False
+    if fresh:
+        return safe_to_power_off(printer_status)
+    # A minute-based heartbeat must not restart a two-minute countdown every
+    # thirty seconds. The final challenge and Tapo worker still demand fresh
+    # explicit idle reports immediately before switching.
+    return printer_status.get('state') in ('IDLE','FINISH') and 0<=time.time()-printer_status.get('state_seen_at',0)<=180
+
+
+def auto_power_switch(job_id):
+    from bridge.devices import TapoSwitch
+    return TapoSwitch().run(False,lambda:auto_power.permitted(job_id),expected_job_id=job_id)
+
+
+auto_power=AutoPowerOff(DB_PATH,auto_power_safe,auto_power_switch,log=log,
+                       connected=lambda:bool(mqtt_client and mqtt_client.is_connected()))
+
+
+@app.post('/settings/auto-power-off')
+def configure_auto_power():
+    try:
+        enabled=request.form.get('enabled')=='on'
+        if enabled and (INVENTORY_BACKEND!='internal' or DRY_RUN or not (os.getenv('TAPO_HOST') or os.getenv('TAPO_HOST_FILE'))):
+            raise ValueError('Automatisches Ausschalten benötigt Produktivbetrieb und eine konfigurierte Steckdose.')
+        auto_power.configure(enabled,request.form.get('job_id'),int(request.form.get('delay','120')))
+        return redirect('/#auto-power-off')
+    except (ValueError,KeyError) as exc:
+        from bridge.ui import render_form_error
+        return render_form_error(str(exc))
+
+ams_write_lock = threading.Lock()
+
+
+class AMSSelectionChanged(ValueError):
+    pass
+
+
+def ams_review(slot, spool_id):
+    from bridge.devices import safe_to_power_off
+    if slot not in ('0','1','2','3','external'):
+        raise ValueError('Ungültiger Schacht.')
+    spool = next((s for s in fetch_spoolman_spools() if str(s['id'])==str(spool_id)),None) if spool_id else None
+    if spool_id and spool is None:
+        raise ValueError('Diese Bestandsspule ist nicht mehr verfügbar. Bitte neu auswählen.')
+    tray = ams_state[int(slot)] if slot != 'external' else {}
+    payload,error = None,None
+    if slot == 'external':
+        error = 'Externe Spulen werden hier nur im Bestand zugeordnet.'
+    elif not spool:
+        error = 'Bitte eine Bestandsspule auswählen.'
+    elif not tray.get('known') or not tray.get('available'):
+        error = 'Im Schacht ist noch kein Filament bestätigt. Bitte Rolle einlegen und Status aktualisieren.'
+    else:
+        try: payload = filament_payload(int(slot),spool,ams_state)
+        except ValueError as exc: error = str(exc)
+    policy = slot_write_reason(printer_status,int(slot),bool(mqtt_client and mqtt_client.is_connected())) if slot!='external' else None
+    reason = error or policy
+    return dict(spool=spool,tray=tray,payload=payload,matches=spool_matches(spool,tray),
+                write_allowed=not reason,write_reason=reason,
+                fingerprint=selection_fingerprint(slot,spool,tray,load_mapping(),payload))
+
+
+def ams_signer():
+    return URLSafeTimedSerializer(app.secret_key,salt='ams-selection-v1')
+
+
+def ams_validate_review(slot, spool_id, mode):
+    try:
+        signed = ams_signer().loads(request.form.get('review_token',''),max_age=120)
+    except BadSignature:
+        raise AMSSelectionChanged('Die Vorschau ist abgelaufen oder ungültig. Bitte die Auswahl erneut prüfen.')
+    current = ams_review(slot,spool_id)
+    if mode=='assign': current['fingerprint']['payload']=None
+    csrf_hash = hashlib.sha256(session.get('csrf_token','').encode()).hexdigest()
+    if signed.get('session')!=csrf_hash or signed.get('mode')!=mode or signed.get('fingerprint')!=current['fingerprint']:
+        raise AMSSelectionChanged('Druckerangaben, Bestand oder Zuordnung haben sich geändert. Bitte erneut prüfen.')
+    if mode=='write' and not current['write_allowed']:
+        raise AMSSelectionChanged(current['write_reason'])
+    if mode=='assign' and slot!='external' and current['spool'] and not current['matches'] and request.form.get('override')!='yes':
+        raise ValueError('Bitte die abweichende oder ungeprüfte Zuordnung ausdrücklich bestätigen.')
+    return current,signed
+
+
+def ams_consume_review(signed):
+    # One reviewed operation, one attempt. An uncertain result needs a fresh
+    # review instead of an automatic repeat of a hardware command.
+    with inventory_connection(DB_PATH) as db:
+        db.execute('BEGIN IMMEDIATE')
+        db.execute("DELETE FROM runtime WHERE key LIKE 'ams-selection:%' AND CAST(value AS REAL)<?",(time.time()-600,))
+        key='ams-selection:'+signed['nonce']
+        if db.execute('SELECT 1 FROM runtime WHERE key=?',(key,)).fetchone():
+            raise AMSSelectionChanged('Diese Änderung wurde bereits gesendet. Bitte den Status prüfen und eine neue Vorschau öffnen.')
+        db.execute('INSERT INTO runtime(key,value) VALUES (?,?)',(key,str(time.time())))
+        db.commit()
+
+
+def ams_job_requires_review(job, slot, spool):
+    if not job or job['state']!='RUNNING' or slot=='external':
+        return False
+    before=json.loads(job.get('slot_mapping_json') or '{}').get(slot)
+    after=str(spool['id']) if spool else None
+    if before==after:
+        return False
+    if int(slot) in json.loads(job.get('observed_slots_json') or '[]'):
+        return True
+    raw=json.loads(job.get('ams_mapping_json') or 'null');raw2=json.loads(job.get('ams_mapping2_json') or 'null')
+    ids=[int(k) for k in json.loads(job.get('weights_json') or '{}')]
+    explicit=[resolve_tray_for_filament(i,raw,raw2) for i in ids]
+    if explicit and all(tray is not None for tray in explicit):
+        return int(slot) in explicit
+    metadata=json.loads(job.get('filaments_json') or '{}')
+    if not metadata:
+        return True
+    old=json.loads(job.get('ams_snapshot_json') or '{}').get(slot,{})
+    candidates=[old,dict(material=spool.get('material'),color=spool.get('clean_color'))] if spool else [old]
+    return any(normalized_color(fil.get('color')) and normalized_color(fil.get('color'))==normalized_color(tray.get('color')) and materials_match(fil.get('material'),tray.get('material')) for fil in metadata.values() for tray in candidates)
+
+
+def ams_mark_job_review(db,slot,spool,expected):
+    active=db.execute("SELECT value FROM runtime WHERE key='active_job_id'").fetchone()
+    jobrow=db.execute('SELECT * FROM jobs WHERE id=?',(active['value'],)).fetchone() if active and active['value'] else None
+    if not jobrow or jobrow['state']!='RUNNING':
+        return
+    key='ams-job-review:'+jobrow['id']
+    existing=db.execute('SELECT value FROM runtime WHERE key=?',(key,)).fetchone()
+    changes=json.loads(existing['value']) if existing else {}
+    if slot in changes or ams_job_requires_review(dict(jobrow),slot,spool):
+        changes[slot]=dict(before=changes.get(slot,{}).get('before',expected),after=str(spool['id']) if spool else None)
+        db.execute('INSERT INTO runtime(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,json.dumps(changes)))
+        db.execute('UPDATE jobs SET error=? WHERE id=?',('Rolle während des Drucks gewechselt: Zuordnung und rollenbezogene Teilmengen vor der Buchung prüfen.',jobrow['id']))
+
+
+def ams_assign_one(slot, spool, expected, after_write=False):
+    with inventory_connection(DB_PATH) as db:
+        db.execute('BEGIN IMMEDIATE')
+        row=db.execute('SELECT spool_id FROM ams_assignments WHERE printer_id=? AND slot_id=? AND released_at IS NULL',(SERIAL,slot)).fetchone()
+        actual=str(row['spool_id']) if row else None
+        if actual != expected and not (after_write and actual is None):
+            raise AMSSelectionChanged('Die Schachtzuordnung wurde inzwischen geändert. Bitte den Status prüfen.')
+        if spool and not db.execute('SELECT 1 FROM spools WHERE id=? AND archived=0 AND removed_at IS NULL',(spool['id'],)).fetchone():
+            raise ValueError('Die Bestandsspule ist inzwischen nicht mehr aktiv.')
+        if actual != (str(spool['id']) if spool else None):
+            now=store.now()
+            db.execute('UPDATE ams_assignments SET released_at=? WHERE printer_id=? AND slot_id=? AND released_at IS NULL',(now,SERIAL,slot))
+            if spool:
+                db.execute('INSERT INTO ams_assignments(printer_id,slot_id,spool_id,assigned_at) VALUES (?,?,?,?)',(SERIAL,slot,spool['id'],now))
+        ams_mark_job_review(db,slot,spool,expected)
+        db.commit()
+
+
+def ams_result(message):
+    return jsonify(message=message,ams=ams_state,mapping=load_mapping(),printer=printer_status)
+
+
+@app.get('/api/ams/selection')
+def ams_selection_preview():
+    if INVENTORY_BACKEND!='internal':
+        return jsonify(error='Interne Bestandsverwaltung erforderlich.'),409
+    slot=request.args.get('slot','');spool_id=request.args.get('spool_id','');mode=request.args.get('mode','assign')
+    try:
+        if mode not in ('assign','write'):
+            raise ValueError('Ungültige Aktion.')
+        if mode=='write':
+            refresh_printer_status()
+        review=ams_review(slot,spool_id)
+        if mode=='write' and not review['write_allowed']:
+            raise AMSSelectionChanged(review['write_reason'])
+        session.setdefault('csrf_token',secrets.token_urlsafe(32))
+        if mode=='assign': review['fingerprint']['payload']=None
+        signed=dict(fingerprint=review['fingerprint'],mode=mode,nonce=secrets.token_urlsafe(20),
+                    session=hashlib.sha256(session['csrf_token'].encode()).hexdigest())
+        profile=review['payload']
+        job=store.get_job(store.active_job_id()) if store.active_job_id() else None
+        needs_review=ams_job_requires_review(job,slot,review['spool'])
+        return jsonify(review_required=needs_review,token=ams_signer().dumps(signed),expires_in=120,matches=review['matches'],
+                       write_allowed=review['write_allowed'],write_reason=review['write_reason'],
+                       spool=review['spool'],tray=review['tray'],printer=printer_status,
+                       profile=dict(material=profile['tray_type'],min=profile['nozzle_temp_min'],max=profile['nozzle_temp_max']) if profile else None)
+    except AMSSelectionChanged as exc:
+        return jsonify(error=str(exc)),409
+    except (ValueError,KeyError) as exc:
+        return jsonify(error=str(exc)),400
+
+
+@app.post('/devices/ams/assign')
+def assign_ams_spool():
+    if INVENTORY_BACKEND!='internal' or request.form.get('confirm')!='assign':
+        return jsonify(error='Bitte die Bestandszuordnung bestätigen.'),400
+    if not ams_write_lock.acquire(blocking=False):
+        return jsonify(error='Eine AMS-Änderung läuft bereits. Bitte kurz warten.'),409
+    try:
+        slot=request.form.get('slot','');spool_id=request.form.get('spool_id','')
+        review,signed=ams_validate_review(slot,spool_id,'assign')
+        ams_consume_review(signed)
+        ams_assign_one(slot,review['spool'],review['fingerprint']['previous'])
+        log(f"Bestandszuordnung für {'externe Spule' if slot=='external' else 'AMS Slot '+str(int(slot)+1)} aktualisiert; keine Druckerangaben geändert.")
+        return ams_result('Bestandszuordnung gespeichert. Druckerangaben unverändert.')
+    except AMSSelectionChanged as exc:
+        return jsonify(error=str(exc)),409
+    except (ValueError,KeyError) as exc:
+        return jsonify(error=str(exc)),400
+    except Exception:
+        return jsonify(error='Zuordnung nicht gespeichert. Bitte den Status prüfen.'),503
+    finally:
+        ams_write_lock.release()
+
+
+@app.post('/devices/ams/filament')
+def write_ams_filament():
+    from bridge.devices import safe_to_power_off
+    if request.form.get('confirm')!='write' or INVENTORY_BACKEND!='internal':
+        return jsonify(error='Bitte die Übertragung an den Drucker ausdrücklich bestätigen.'),400
+    if not ams_write_lock.acquire(blocking=False):
+        return jsonify(error='Eine AMS-Änderung läuft bereits. Bitte kurz warten.'),409
+    try:
+        slot=str(int(request.form['slot']));spool_id=request.form['spool_id']
+        if not refresh_printer_status():
+            return jsonify(error='Aktueller Druckerstatus fehlt. Bitte Status aktualisieren.'),409
+        policy=slot_write_reason(printer_status,int(slot),bool(mqtt_client and mqtt_client.is_connected()))
+        if policy: return jsonify(error=policy),409
+        review,signed=ams_validate_review(slot,spool_id,'write')
+        payload=dict(review['payload'])
+        policy=slot_write_reason(printer_status,int(slot),bool(mqtt_client and mqtt_client.is_connected()))
+        if policy: raise AMSSelectionChanged(policy)
+        ams_consume_review(signed)
+        with inventory_connection(DB_PATH) as db:
+            db.execute('BEGIN IMMEDIATE')
+            ams_mark_job_review(db,slot,review['spool'],review['fingerprint']['previous'])
+            db.commit()
+        sequence=telemetry.ams_sequence(int(slot))
+        payload['sequence_id']=next_sequence()
+        client=mqtt_client
+        if client is None or not client.is_connected() or client.publish(f'device/{SERIAL}/request',json.dumps({'print':payload}),qos=0).rc!=mqtt.MQTT_ERR_SUCCESS:
+            return jsonify(error='AMS-Befehl konnte nicht gesendet werden. Bitte den Status prüfen.'),503
+        send_pushall(client)
+        if not telemetry.wait_for_ams_write(int(slot),sequence,payload['sequence_id'],payload['tray_type'],'#'+payload['tray_color'][:6],timeout=25):
+            return jsonify(error='Keine passende neue Druckerbestätigung. Ergebnis unklar: Bitte den Status prüfen und vor einem neuen Versuch erneut bestätigen.'),504
+        record_ams_changes()
+        ams_assign_one(slot,review['spool'],review['fingerprint']['previous'],after_write=True)
+        log(f'AMS Slot {int(slot)+1}: Material/Farbe bestätigt und Bestandsspule zugeordnet.')
+        return ams_result('Drucker bestätigt. Material, Farbe und Bestandsspule übernommen.')
+    except AMSCommandRejected as exc:
+        return jsonify(error=str(exc)),422
+    except AMSSelectionChanged as exc:
+        return jsonify(error=str(exc)),409
+    except (ValueError,KeyError) as exc:
+        return jsonify(error=str(exc)),400
+    except Exception:
+        return jsonify(error='Ergebnis der AMS-Übertragung unklar. Bitte aktuellen Druckerstatus prüfen; nicht ungeprüft erneut senden.'),503
+    finally:
+        ams_write_lock.release()
+
 
 def job_mapping_forms():
     forms = []
@@ -1040,16 +1422,28 @@ def job_mapping_forms():
         metadata = json.loads(job.get('filaments_json') or '{}')
         inventory = json.loads(job.get('ams_snapshot_json') or '{}')
         planned = store.deductions_for_job(job['id'])
+        preview = []
+        if weights and AUTO_MATCH_FILAMENTS and job.get('mapping_source') != 'USER':
+            preview, _, _ = plan_consumption(
+                job, {int(k): float(v) for k, v in weights.items()}, metadata,
+                json.loads(job.get('slot_mapping_json') or '{}'),
+                json.loads(job.get('spools_snapshot_json') or '{}'))
         ids = sorted(int(k) for k in weights) if weights else list(range(1, max(len(mapping), 4) + 1))
         job['filaments'] = []
         for i in ids:
+            suggested = False
             tray = resolve_tray_for_filament(i, mapping, mapping2)
             if tray is None:
                 planned_trays = {row['tray_id'] for row in planned if row['filament_id'] == i and row['tray_id'] is not None}
                 if len(planned_trays) == 1: tray = planned_trays.pop()
             fil = metadata.get(str(i), {})
+            if tray is None:
+                parts = [row for row in preview if row['filament_id'] == i]
+                if len(parts) == 1 and parts[0]['status'] == 'PENDING' and parts[0]['tray_id'] is not None:
+                    tray = parts[0]['tray_id']
+                    suggested = True
             job['filaments'].append({'id': i, 'grams': weights.get(str(i)), 'tray': tray,
-                                     'color': normalized_color(fil.get('color')), 'material': fil.get('material','')})
+                                     'suggested': suggested, 'color': normalized_color(fil.get('color')), 'material': fil.get('material','')})
         job['assignment_summary'] = (f"{sum(f['tray'] is not None for f in job['filaments'])} von {len(ids)} Filamenten zugeordnet" if weights else '')
         job['slot_labels'] = {slot: f"AMS Slot {slot + 1}" + (f" · {inventory[str(slot)].get('material','')} · {inventory[str(slot)].get('color','')}" if inventory.get(str(slot),{}).get('known') else '') for slot in range(4)}
         forms.append(job)
@@ -1079,7 +1473,7 @@ HTML_TEMPLATE = r"""
 {% endif %}
 
 <section class="card">
-  <div class="top">
+  <div class="top printer-heading">
     <div>
       <div class="eyebrow">Dein Drucker</div><h1>Drucker & Verbrauch</h1>
   <div class="muted">A1 / A1 mini · AMS Lite · Automatische Verbrauchsbuchung</div>
@@ -1088,53 +1482,20 @@ HTML_TEMPLATE = r"""
       <button class="secondary" onclick="window.location.reload()">Aktualisieren</button>
 
     </div>
+    """ + A1_VISUAL + r"""
   </div>
   <div class="status">
     <div><span class="muted">Spoolman:</span> <strong id="spoolman">{{ 'Verbunden' if spoolman.connected else 'Nicht verbunden' }}</strong></div>
     <div><span class="muted">Drucker:</span> <span id="state" class="pill">{{ printer.state }}</span> <span id="progress">{{ printer.progress }}%</span></div>
     <div><span class="muted">Datei:</span> <strong id="subtask">{{ printer.subtask_name or '—' }}</strong></div>
+    <div><span class="muted">Voraussichtliche Restzeit:</span> <strong id="remaining-time">{{printer|remaining_time}}</strong><div class="muted small">Schätzung des Druckers</div></div>
     <div><span class="muted">Aktiver Schacht:</span> <strong id="active">{{ printer.active_slot_label }}</strong></div>
   </div>
 </section>
 
-<section class="card">
-  <h2>Spulen im AMS Lite</h2>
-    <p class="muted">Wähle für jeden Schacht die eingelegte Spule aus. Aktualisiere die Zuordnung nach einem Rollenwechsel.</p>
-    <details class="diagnostics"><summary class="muted small">Automatischer Abgleich: {{'aktiv' if auto_match else 'deaktiviert'}}</summary><p class="muted small">Farbe und Material werden mit den Slicer-Angaben verglichen. Bei mehreren passenden Spulen helfen der beobachtete Slot und das Restgewicht bei der Zuordnung.</p></details>
-  <form method="post" action="/save">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    {% for slot_id in range(4) %}
-      <div class="slot">
-        <div>
-          <span class="swatch" style="background:{{ ams[slot_id].color }}"></span>
-          <strong>AMS Slot {{ slot_id + 1 }}</strong>
-          <div class="muted small">{{ ams[slot_id].type }} · Rest: {% if ams[slot_id].get('remain', -1)|int(-1)>=0 %}{{ ams[slot_id].remain }}%{% else %}unbekannt{% endif %}</div>
-          <div class="muted small">Material/Farbcode: {% if ams[slot_id].known and ams[slot_id].available %}{{ ams[slot_id].material }} / <code>{{ ams[slot_id].color }}</code>{% else %}—{% endif %}</div>
-        </div>
-        <select name="slot_{{ slot_id }}">
-          <option value="">Keine Spule zugeordnet</option>
-          {% for s in spools %}
-            <option value="{{ s.id }}" {% if mapping.get(slot_id|string) == s.id|string %}selected{% endif %}>
-              {{ s.filament.vendor.name ~ ' · ' if s.filament and s.filament.vendor and s.filament.vendor.name else '' }}{{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g
-            </option>
-          {% endfor %}
-        </select>
-      </div>
-    {% endfor %}
-    <div class="slot">
-      <div><strong>Externe Spule</strong><div class="muted small">Spulenhalter / vt_tray</div></div>
-      <select name="slot_external">
-        <option value="">Keine Spule zugeordnet</option>
-        {% for s in spools %}
-          <option value="{{ s.id }}" {% if mapping.get('external') == s.id|string %}selected{% endif %}>
-            {{ s.filament.vendor.name ~ ' · ' if s.filament and s.filament.vendor and s.filament.vendor.name else '' }}{{ s.filament.name if s.filament else 'Unbekannt' }} ({{ s.material }}) · {{ (s.remaining_weight|round|int) if s.remaining_weight is not none else '?' }} g
-          </option>
-        {% endfor %}
-      </select>
-    </div>
-    <div style="text-align:right;margin-top:12px;"><button type="submit">Zuordnung speichern</button></div>
-  </form>
-</section>
+""" + AMS_PANEL + r"""
+
+<section class="card" id="auto-power-off"><h2>Nach diesem Druck ausschalten</h2><p class="muted">Erst nach erfolgreichem Druckende und abgeschlossener Verbrauchsbuchung. Bei Abbruch, neuem Druck oder ungeklärter Zuordnung wird nicht automatisch ausgeschaltet.</p><form method="post" action="/settings/auto-power-off"><input type="hidden" name="csrf_token" value="{{csrf_token}}"><input type="hidden" name="job_id" value="{{active_job_id or auto_power.job_id or ''}}"><label style="display:flex;gap:10px;align-items:center"><input style="width:auto" type="checkbox" name="enabled" {% if auto_power.enabled %}checked{% endif %} {% if not active_job_id and not auto_power.enabled %}disabled{% endif %}> Steckdose nach diesem Druck automatisch ausschalten</label><div class="actions"><label>Wartezeit nach abgeschlossener Buchung<select name="delay">{% for seconds,label in [(60,'1 Minute'),(120,'2 Minuten (empfohlen)'),(180,'3 Minuten')] %}<option value="{{seconds}}" {% if auto_power.delay==seconds %}selected{% endif %}>{{label}}</option>{% endfor %}</select></label><button>Automatik speichern</button></div><p id="auto-power-status" class="muted small" role="status">{{auto_power.message}}</p></form></section>
 
 <section class="card">
   <h2>Verbrauch manuell erfassen</h2>
@@ -1165,12 +1526,13 @@ HTML_TEMPLATE = r"""
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <strong>{{ job.subtask_name or job.filename or job.id[:8] }}</strong> · {{ job.state }}
     {% if job.mapping_source %}<span class="muted"> · Zuordnung: {{ job.mapping_source }}</span>{% endif %}
+    <p class="muted small">Automatische Vorschau und spätere Rückmeldungen erscheinen nach dem Neuladen. Verbrauch wird erst nach Druckende gebucht.</p>
     {% if job.assignment_summary %}<p><strong>{{ job.assignment_summary }}</strong></p>{% endif %}
     {% if job.error %}<p class="muted">{{ job.error }}</p>{% endif %}
     {% for filament in job.filaments %}
     <div class="slot">
       <label for="{{ job.id }}-f{{ filament.id }}">Filament {{ filament.id }}{% if filament.grams is not none %} · {{ '%.2f'|format(filament.grams) }} g{% endif %}
-        <span class="muted small" style="display:block">{% if filament.color %}<span class="swatch" style="background:#{{ filament.color }}"></span>#{{ filament.color }}{% endif %} {{ filament.material }}</span>
+        <span class="muted small" style="display:block">{% if filament.color %}<span class="swatch" style="background:#{{ filament.color }}"></span>#{{ filament.color }}{% endif %} {{ filament.material }}{% if filament.suggested %} · Automatische Vorschau (Farbe & Material), noch nicht gebucht{% endif %}</span>
       </label>
       <select id="{{ job.id }}-f{{ filament.id }}" name="filament_{{ filament.id }}">
         <option value="-1">— Nicht zugeordnet —</option>
@@ -1188,16 +1550,16 @@ HTML_TEMPLATE = r"""
   <h2>Buchungsjournal (Letzte Positionen)</h2>
   <div style="overflow:auto;">
     <table>
-      <thead><tr><th>Zeit</th><th>Auftrag</th><th>Schacht</th><th>Spule</th><th>Verbrauch</th><th>Status</th><th>Details</th></tr></thead>
+      <thead><tr><th>Datum & Uhrzeit</th><th>Auftrag</th><th>Schacht</th><th>Spule</th><th>Menge</th><th>Status</th><th>Details</th></tr></thead>
       <tbody id="deductions">
         {% for d in deductions %}
           <tr>
-            <td>{{ d.created_at[11:19] }}</td>
+            <td>{{ d.created_at|date_time }}</td>
             <td>{{ d.subtask_name or d.filename or d.job_id[:8] }}</td>
             <td>{{ 'Extern' if d.tray_id == 254 else (('Slot ' ~ (d.tray_id + 1)) if d.tray_id is not none else '—') }}</td>
             <td>{{ ('#' ~ d.spool_id) if d.spool_id else '—' }}</td>
-            <td>{{ '%.2f'|format(d.grams) }} g</td>
-            <td><strong>{{ d.status }}{% if d.estimated %} · SCHÄTZUNG{% endif %}</strong></td>
+            <td>{{ d.amount_label if d.amount_label is defined else ('%.2f'|format(d.grams))+' g' }}</td>
+            <td><strong>{{ d.status_label or d.status }}{% if d.estimated %} · SCHÄTZUNG{% endif %}</strong></td>
             <td class="muted small">{{ d.detail }}</td>
           </tr>
         {% else %}
@@ -1217,11 +1579,17 @@ HTML_TEMPLATE = r"""
 
 <script>
 let userScrolled=false;const logBox=document.getElementById('logs');logBox.addEventListener('scroll',()=>{userScrolled=(logBox.scrollHeight-logBox.scrollTop-logBox.clientHeight)>30;});
+function formatRemaining(printer){if(printer.state==='FINISH')return 'Abgeschlossen';if(!['RUNNING','PREPARE','PAUSE'].includes(printer.state))return '—';const age=Date.now()/1000-(printer.remaining_seen_at||0),minutes=printer.remaining_minutes;if(minutes==null||age<0||age>180)return 'Warte auf Zeitangabe';const hours=Math.floor(minutes/60),rest=minutes%60;const text=hours?hours+' Std. '+rest+' Min.':rest?rest+' Min.':'< 1 Min.';return (printer.state==='PAUSE'?'Pausiert · noch ':'ca. ')+text}
+function formatDateTime(value){if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?value:new Intl.DateTimeFormat('de-DE',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(date)}
 function cell(row,val){const td=document.createElement('td');td.textContent=val??'';row.appendChild(td);}
 function refreshStatus(){fetch('/api/status').then(r=>r.json()).then(data=>{
  document.getElementById('spoolman').textContent=data.spoolman.connected?'Verbunden':'Nicht verbunden';
  document.getElementById('state').textContent=data.printer.state;
+ if(data.ams)updateAMS(data.ams,data.ams_mapping,data.printer);
+ const illustration=document.querySelector('.printer-illustration');if(illustration)illustration.classList.toggle('printing',data.printer.state==='RUNNING');
  document.getElementById('progress').textContent=data.printer.progress+'%';
+ document.getElementById('remaining-time').textContent=formatRemaining(data.printer);
+ const powerStatus=document.getElementById('auto-power-status');if(powerStatus&&data.auto_power){let text=data.auto_power.message;if(data.auto_power.due_at&&data.auto_power.enabled)text+=' Noch ca. '+Math.max(0,Math.ceil((data.auto_power.due_at-Date.now()/1000)/60))+' Min.';powerStatus.textContent=text;}
  document.getElementById('subtask').textContent=data.printer.subtask_name||'—';
  document.getElementById('active').textContent=data.printer.active_slot_label;
  logBox.textContent=data.logs.join('\n');
@@ -1229,12 +1597,12 @@ function refreshStatus(){fetch('/api/status').then(r=>r.json()).then(data=>{
  const tbody=document.getElementById('deductions');tbody.replaceChildren();
  data.deductions.forEach(d=>{
    const tr=document.createElement('tr');
-   cell(tr,(d.created_at||'').slice(11,19));
+   cell(tr,formatDateTime(d.created_at));
    cell(tr,d.subtask_name||d.filename||d.job_id.slice(0,8));
    cell(tr,d.tray_id===null?'—':(d.tray_id===254?'Extern':'Slot '+(d.tray_id+1)));
    cell(tr,d.spool_id?'#'+d.spool_id:'—');
-   cell(tr,Number(d.grams).toFixed(2)+' g');
-   cell(tr,d.status+(d.estimated?' · SCHÄTZUNG':''));
+   cell(tr,d.amount_label||Number(d.grams).toFixed(2)+' g');
+   cell(tr,(d.status_label||d.status)+(d.estimated?' · SCHÄTZUNG':''));
    cell(tr,d.detail);
    tbody.appendChild(tr);
  });
@@ -1254,6 +1622,7 @@ def index():
         HTML_TEMPLATE.replace("Spoolman", "Inventar") if INVENTORY_BACKEND == "internal" else HTML_TEMPLATE,
         active='overview', title='Drucker & Verbrauch',
         version=APP_VERSION,
+        material_family_pattern=MATERIAL_FAMILY_PATTERN,
         build_time=APP_BUILD_TIME,
         csrf_token=session["csrf_token"],
         printer=printer_status,
@@ -1261,6 +1630,7 @@ def index():
         ams=ams_state,
         mapping=load_mapping(),
         mapping_jobs=job_mapping_forms(),
+        auto_power=auto_power.status(),active_job_id=store.active_job_id(),
         spools=fetch_spoolman_spools(),
         deductions=store.list_deductions(30),
         logs=list(log_buffer),
@@ -1274,10 +1644,13 @@ def status_api():
     with log_lock: logs = list(log_buffer)
     return jsonify({
         "printer": printer_status,
+        "ams": ams_state,
+        "ams_mapping": load_mapping(),
         "spoolman": spoolman_status,
         "jobs": store.list_jobs(),
         "dry_run": DRY_RUN,
         "auto_match_filaments": AUTO_MATCH_FILAMENTS,
+        "auto_power": auto_power.status(),
         "deductions": store.list_deductions(30),
         "logs": logs,
     })
@@ -1288,10 +1661,14 @@ def save():
     mapping["external"] = request.form.get("slot_external") or None
     if any(v is not None and (not v.isdigit() or int(v) <= 0) for v in mapping.values()):
         return Response('Ungültige Spulen-ID.', 400)
+    if not ams_write_lock.acquire(blocking=False):
+        return Response('Eine AMS-Änderung läuft bereits. Bitte kurz warten.',409)
     try:
         save_mapping(mapping)
     except InventoryError as exc:
         return Response(str(exc), 400, mimetype='text/plain')
+    finally:
+        ams_write_lock.release()
     # Only fill assignments that were missing; retain all already recorded spool IDs.
     for job_id in store.recoverable_jobs():
         job = store.get_job(job_id)
@@ -1359,12 +1736,14 @@ def app_settings():
         auto_match = request.form.get('auto_match') == 'on'
         with inventory_connection(DB_PATH) as db:
             db.execute('BEGIN IMMEDIATE')
-            for key, value in [('dry_run', dry_run), ('auto_match_filaments', auto_match)]:
+            for key, value in [('dry_run', dry_run), ('auto_match_filaments', auto_match), ('flow_calibration_allowance', request.form.get('flow_allowance') == 'on')]:
                 db.execute('INSERT INTO settings(key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', (key, json.dumps(value), store.now()))
             db.commit()
         DRY_RUN, AUTO_MATCH_FILAMENTS = dry_run, auto_match
         return redirect('/settings?saved=1')
-    return render_ui(SETTINGS_PAGE, active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
+    with inventory_connection(DB_PATH) as db:
+        option = db.execute("SELECT value_json FROM settings WHERE key='flow_calibration_allowance'").fetchone()
+    return render_ui(SETTINGS_PAGE, flow_allowance=bool(option and json.loads(option['value_json']) is True), active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
 
 
 def main():
@@ -1397,6 +1776,13 @@ def main():
             time.sleep(10)
 
     threading.Thread(target=mqtt_runner, daemon=True).start()
+
+    def auto_power_runner():
+        while True:
+            try:auto_power.poll()
+            except Exception:logger.warning('Automatische Abschaltprüfung fehlgeschlagen; es wird nicht ausgeschaltet.')
+            time.sleep(5)
+    threading.Thread(target=auto_power_runner,daemon=True).start()
 
     def retry_worker():
         while True:

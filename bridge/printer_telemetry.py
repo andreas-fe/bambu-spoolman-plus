@@ -1,6 +1,11 @@
 """Tolerant MQTT telemetry, independent of inventory and external devices."""
 import time
 import threading
+import math
+
+
+class AMSCommandRejected(ValueError):
+    pass
 
 
 class PrinterTelemetry:
@@ -9,11 +14,33 @@ class PrinterTelemetry:
         self._state_sequence = 0
         self._light_sequence = 0
         self._light_mode = None
+        self._ams_sequences = {i: 0 for i in range(4)}
+        self._ams_revisions = {i: 0 for i in range(4)}
+        self._ams_signatures = {i: None for i in range(4)}
+        self._ams_commands = {}
+        self._ams_command_times = {}
         self.ams = {i: dict(type='-', material='', color='#888888', remain=-1, available=False, known=False) for i in range(4)}
         self.status = dict(state='OFFLINE', progress=0, subtask_name='', active_slot=None,
-                           active_slot_label='Kein Slot erkannt', layer=0, stage=None)
+                           active_slot_label='Kein Slot erkannt', layer=0, stage=None,
+                           remaining_minutes=None, remaining_seen_at=0)
+        self.status.update(target_slot=None,target_slot_known=False)
 
     def update(self, payload, color_normalizer):
+        if payload.get('command')=='ams_filament_setting' and payload.get('sequence_id') is not None:
+            code=payload.get('err_code',0)
+            try:code=int(str(code),0) if isinstance(code,str) else int(code)
+            except (ValueError,TypeError):code=-1
+            failed=code!=0 or str(payload.get('result','')).lower() in ('fail','failed','error')
+            error=('Drucker lehnt AMS-Änderung ab (Fehler '+str(code)+').') if failed else None
+            if code==84033543:
+                error+=' Die Firmware verlangt eine Befehlsautorisierung. LAN-/Entwicklermodus oder zugelassene Bambu-Anbindung prüfen.'
+            self.status['ams_write_error']=error
+            with self._state_changed:
+                self._ams_commands[str(payload['sequence_id'])]=error
+                self._ams_command_times[str(payload['sequence_id'])]=time.monotonic()
+                while len(self._ams_commands)>32:
+                    old=next(iter(self._ams_commands));self._ams_commands.pop(old);self._ams_command_times.pop(old,None)
+                self._state_changed.notify_all()
         lights = payload.get('lights_report')
         for light in lights if isinstance(lights, list) else []:
             if isinstance(light, dict) and light.get('node') == 'chamber_light' and light.get('mode') in ('on', 'off'):
@@ -38,6 +65,9 @@ class PrinterTelemetry:
                 if tid not in self.ams:
                     continue
                 current = self.ams[tid]
+                for key in ('tray_info_idx', 'nozzle_temp_min', 'nozzle_temp_max'):
+                    if key in tray:
+                        current[key] = tray[key]
                 if 'tray_type' in tray:
                     material = str(tray['tray_type'] or '')
                     current.update(known=True, material=material, available=bool(material),
@@ -48,6 +78,11 @@ class PrinterTelemetry:
                     current['remain'] = tray['remain']
                 if set(tray) == {'id'}:
                     current.update(available=False, known=True)
+                if 'tray_color' in tray or 'tray_type' in tray:
+                    current['seen_at'] = time.time()
+                    with self._state_changed:
+                        self._ams_sequences[tid] += 1
+                        self._state_changed.notify_all()
         if 'tray_exist_bits' in ams:
             try:
                 bits = int(str(ams['tray_exist_bits']), 16)
@@ -56,7 +91,20 @@ class PrinterTelemetry:
                         self.ams[tid].update(available=False, known=True)
             except (TypeError, ValueError):
                 pass
+        with self._state_changed:
+            for slot,tray in self.ams.items():
+                signature=tuple(tray.get(k) for k in ('known','available','material','color','tray_info_idx'))
+                if signature!=self._ams_signatures[slot]:
+                    self._ams_signatures[slot]=signature;self._ams_revisions[slot]+=1
+                    self._state_changed.notify_all()
         raw_tray = ams.get('tray_now', payload.get('tray_now'))
+        if 'tray_tar' in ams:
+            try:
+                target=int(ams['tray_tar'])
+                self.status.update(target_slot=target if target in (0,1,2,3,254) else None,
+                                   target_slot_known=target in (0,1,2,3,254,255))
+            except (TypeError,ValueError):
+                self.status.update(target_slot=None,target_slot_known=False)
         try:
             tray = int(raw_tray) if raw_tray is not None else None
         except (TypeError, ValueError):
@@ -72,9 +120,24 @@ class PrinterTelemetry:
         subtask = str(payload.get('subtask_name') or '')
         if state:
             with self._state_changed:
+                if state in ('RUNNING','PREPARE') and self.status['state'] not in ('RUNNING','PREPARE','PAUSE'):
+                    self.status.update(remaining_minutes=None, remaining_seen_at=0)
                 self.status.update(state=state, state_seen_at=time.time())
                 self._state_sequence += 1
                 self._state_changed.notify_all()
+        if 'mc_remaining_time' in payload:
+            try:
+                raw = payload['mc_remaining_time']
+                minutes = float(raw)
+                if isinstance(raw, bool) or not math.isfinite(minutes) or not 0 <= minutes <= 525600:
+                    raise ValueError('Invalid remaining time')
+                self.status.update(remaining_minutes=math.ceil(minutes), remaining_seen_at=time.time())
+            except (ValueError,TypeError,OverflowError):
+                self.status.update(remaining_minutes=None, remaining_seen_at=0)
+        if state == 'FINISH':
+            self.status.update(remaining_minutes=0, remaining_seen_at=time.time())
+        elif state in ('IDLE','OFFLINE','FAILED','CANCEL','CANCELLED','CANCELED','STOPPED','ERROR'):
+            self.status.update(remaining_minutes=None, remaining_seen_at=0)
         for source, target in [('mc_percent', 'progress'), ('layer_num', 'layer'), ('stg_cur', 'stage')]:
             if source in payload:
                 try:
@@ -92,6 +155,36 @@ class PrinterTelemetry:
     def state_sequence(self):
         with self._state_changed:
             return self._state_sequence
+
+    def ams_sequence(self, slot):
+        with self._state_changed:
+            return self._ams_sequences[slot]
+
+    def wait_for_ams(self, slot, after_sequence, material, color, timeout=10):
+        with self._state_changed:
+            return self._state_changed.wait_for(lambda:
+                self._ams_sequences[slot] > after_sequence
+                and self.ams[slot].get('material', '').upper() == material.upper()
+                and self.ams[slot].get('color', '').upper() == color.upper(), timeout)
+
+    def wait_for_ams_write(self, slot, after_sequence, command_sequence, material, color, timeout=25, settle=3, min_duration=8):
+        command_sequence=str(command_sequence)
+        with self._state_changed:
+            deadline=time.monotonic()+timeout;stable_since=None;last_signature=None
+            while True:
+                now=time.monotonic()
+                if command_sequence in self._ams_commands and self._ams_commands[command_sequence]:
+                    raise AMSCommandRejected(self._ams_commands[command_sequence])
+                tray=self.ams[slot]
+                signature=(self._ams_revisions[slot],)+tuple(tray.get(k) for k in ('known','available','material','color','tray_info_idx'))
+                matches=tray.get('known') and tray.get('available') and self._ams_sequences[slot]>after_sequence and str(tray.get('material','')).upper()==material.upper() and str(tray.get('color','')).upper()==color.upper()
+                if not matches:stable_since=None
+                elif stable_since is None or signature!=last_signature:stable_since=now
+                last_signature=signature
+                if command_sequence in self._ams_commands and stable_since is not None and now-stable_since>=settle and now-self._ams_command_times[command_sequence]>=min_duration:
+                    return True
+                if now>=deadline:return False
+                self._state_changed.wait(min(.25,deadline-now))
 
     def wait_for_state(self, after_sequence, timeout=6):
         """Light/AMS-only deltas must never validate an old idle state."""

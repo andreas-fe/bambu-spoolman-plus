@@ -53,3 +53,22 @@ Die A1/P1-Kamera wird unter `/camera` bei Bedarf als MJPEG angezeigt. Schließen
 Tapo läuft einschließlich nativer Bibliothek in einem kurzlebigen Hilfsprozess und liest vor jedem Schalten den Gerätezustand. Bibliotheksabstürze und Zeitüberschreitungen bleiben dadurch von Flask und Inventarworker getrennt. Verwendet wird [tapo 0.12.2](https://github.com/mihai-dinculescu/tapo/releases/tag/v0.12.2); die bisherige Version 0.8.2 konnte die vorhandene Geräteantwort nicht lesen. Der Hilfsprozess beendet sich nach vollständig abgeschlossener Anfrage ohne die auf dem NAS fehlerhafte native Interpreter-Finalisierung. Abschalten benötigt einen innerhalb von 30 Sekunden frisch empfangenen MQTT-Zustand IDLE oder FINISH; OFFLINE, RUNNING, PAUSE und veraltete Daten sperren die Aktion. Keine automatische Abschaltung. Legacy-Clients unter `integrations/tapo` verwenden dieselbe externe Konfiguration und prüfen für das Abschalten den Plus-Druckerstatus.
 
 Die bisherige 3MF-Gewichtsauswertung, Abbruchschätzung und beobachteten AMS-Wechsel bleiben erhalten. Eine präzise layerbasierte Extrusionsaufteilung für physische Spulenwechsel ist damit noch nicht nachgewiesen. Dafür fehlen verifizierte reale Layer-/Wechseldaten; solche Mengen werden weiterhin ausdrücklich als Schätzungen behandelt. X1/RTSP-Kameras sind nicht Bestandteil des A1/P1-Kameraclients. Geräteprüfungen müssen bei erreichbarem Drucker nachgeholt werden.
+
+## Updates des aktuellen Plus-Stands
+
+Das historische `deploy_qnap.py` nicht unverändert verwenden. Es erfasst zusätzliche Module nicht vollständig und setzt einen laufenden Spoolman voraus. Das neue Image aus dem **gesamten** Verzeichnis `bridge/` bauen; Backend, Simulation und bestehende Datenvolumes bewusst erhalten. Ein vorhandenes Compose-Netzwerk kann auch ohne laufenden Spoolman weiterbestehen.
+
+Vor dem Austausch mindestens private Konfiguration, kompletten Quellstand, Compose-Definition, vorheriges Containerimage und eine konsistente SQLite-Kopie sichern. Prüfsummen prüfen und Sicherungen getrennt kopieren. Bei laufendem SQLite die Backup-API nutzen; einfaches Kopieren nur der Hauptdatei kann WAL-Inhalte verlieren. Am Kandidaten auf separater Datenkopie Schema, Integrität, Referenzen, Export und kritische Ansichten prüfen. Für neue Migrationen bleibt der vollständige Testimport verpflichtend.
+
+Automatisierte Tests dürfen keine produktiven Inventardaten mounten und keine echten Gerätebefehle auslösen. Auf NAS empfiehlt sich ein temporäres Arbeitsspeicher-Dateisystem für Testdaten. Nach Freigabe Health und Bestandssystem, Simulationsmodus, offene Jobs, aktuelle AMS-Bindungen und Journal vergleichen. Geräteaktionen zuerst im Leerlauf testen.
+
+### Laufzeitzustände nach Neustart oder Restore
+
+- Der Flusszuschlag wird für jeden neu erkannten Auftrag festgehalten. Spätere Änderungen des globalen Schalters ändern diesen Auftrag nicht; alte Aufträge ohne Snapshot erhalten keinen rückwirkenden Zuschlag. Native Exporte enthalten die zugehörigen Einstellungen.
+- Relevante AMS-Rollenwechsel können eine offene Auftragsprüfung hinterlassen. Beim Wiederherstellen diese nicht umgehen oder durch pauschales Neuzuordnen beseitigen.
+- Native Inventarexporte aktivieren keine automatische Tapo-Abschaltung. Vollständige SQLite-Backups enthalten dagegen Laufzeitzustände; vor Produktivstart deren Bedeutung prüfen. Ein beim Schalten unterbrochener Versuch wird nicht automatisch wiederholt.
+- Ein Rollback des Codes darf seit dem Backup neu entstandene Buchungen nicht durch ein altes Datenbankabbild überschreiben. Neu entstandene Bewegungen vor einem Backendwechsel vollständig abgleichen.
+
+### LAN-/Entwicklermodus
+
+Für direkte Material-/Farbübertragung muss der Drucker im LAN-only- und Entwicklermodus stehen. Nach einem Moduswechsel den aktuellen Zugangscode ausschließlich privat hinterlegen. Kamera-LAN-Freigabe gegebenenfalls gesondert prüfen. Die Anwendung führt keinen automatischen Moduswechsel durch und benötigt keine Veröffentlichung von Druckerkennungen oder Codes. [Bedienungsanleitung](user-guide.md#voraussetzungen-und-druckermodus).

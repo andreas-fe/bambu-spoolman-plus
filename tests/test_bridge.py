@@ -677,6 +677,7 @@ def test_native_json_roundtrip_including_journal(bridge, tmp_path):
     job = b.store.create_manual_job(sid, None, 4)
     b.process_job(job)
     exported = export_inventory(b.DB_PATH)
+    exported['tables']['filaments'][0].update(empty_spool_weight_g=211.5, notes='Mehrwegspule')
     assert all(r['key'] != 'flask_secret_key' for r in exported['tables']['runtime'])
     target = tmp_path / 'restored.sqlite3'
     b.Store(target)
@@ -685,6 +686,31 @@ def test_native_json_roundtrip_including_journal(bridge, tmp_path):
     assert export_inventory(target) == exported
     with pytest.raises(ValueError):
         restore_inventory(target, exported)
+
+
+def test_version_two_inventory_export_remains_restorable(bridge, tmp_path):
+    from bridge.inventory_db import apply_migrations
+    from bridge.inventory_exchange import export_inventory, restore_inventory
+    enable_internal(bridge)
+    exported = export_inventory(bridge.DB_PATH)
+    exported['version'] = 2
+    for product in exported['tables']['filaments']:
+        product.pop('empty_spool_weight_g')
+        product.pop('notes')
+    for spool in exported['tables']['spools']:
+        spool.pop('removed_at')
+    target = tmp_path / 'restored-v2.sqlite3'
+    bridge.Store(target)
+    apply_migrations(target)
+    restore_inventory(target, exported)
+    restored = export_inventory(target)
+    assert restored['version'] == 4
+    for product in restored['tables']['filaments']:
+        assert product.pop('empty_spool_weight_g') is None
+        assert product.pop('notes') == ''
+    for spool in restored['tables']['spools']:
+        assert spool.pop('removed_at') is None
+    assert restored['tables'] == exported['tables']
 
 
 def test_tapo_off_is_blocked_without_fresh_idle_status(bridge):
@@ -832,7 +858,7 @@ def test_inventory_cards_and_named_selects_render(bridge):
     assert response.status_code == 200
     assert b'spool-cards' in response.data
     assert b'material-filter' in response.data
-    assert b'<select name="filament_id">' in response.data
+    assert b'<select name="filament_id"' in response.data
 
 
 def test_power_off_requests_new_idle_state_independently_of_light(bridge, monkeypatch):
@@ -924,3 +950,316 @@ def test_pushall_uses_bounded_sequence_and_checks_publish_failure(bridge):
     mqtt.publish.return_value = SimpleNamespace(rc=4)
     with pytest.raises(ConnectionError):
         bridge.send_pushall(mqtt)
+
+
+def test_running_job_shows_auto_mapping_preview_without_writing_or_booking(bridge):
+    b = bridge
+    b.AUTO_MATCH_FILAMENTS = True
+    job = b.store.create_or_update_running_job('test.3mf', 'Test', None)
+    b.store.update_job(job, weights_json=json.dumps({'1': 27.3}),
+                       filaments_json=json.dumps({'1': {'color': '#FFFFFF', 'material': 'PLA'}}),
+                       ams_snapshot_json=json.dumps({'1': {'known': True, 'available': True, 'color': '#FFFFFF', 'material': 'PLA'}}),
+                       observed_slots_json='[1]', spools_snapshot_json=json.dumps({'20': {'remaining_weight': 871.88, 'color': 'FFFFFF', 'material': 'PLA'}}))
+    before = b.store.get_job(job)
+    form = next(f for f in b.job_mapping_forms() if f['id'] == job)
+    assert form['filaments'][0]['tray'] == 1
+    assert form['filaments'][0]['suggested'] is True
+    assert b.store.get_job(job) == before
+    assert b.store.deductions_for_job(job) == []
+    html = b.app.test_client().get('/').text
+    assert 'Automatische Vorschau (Farbe & Material)' in html
+    assert 'Verbrauch wird erst nach Druckende gebucht' in html
+
+
+def test_journal_dates_and_live_logs_include_date(bridge):
+    b = bridge
+    assert b.display_date_time('2026-11-14T08:54:04+00:00') == '14.11.2026 09:54:04'
+    assert b.display_date_time('2026-07-14T08:54:04+00:00') == '14.07.2026 10:54:04'
+    assert b.display_date_time(None) == '—'
+    b.log('Datumstest')
+    assert __import__('re').search(r'\[\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\]', b.log_buffer[-1])
+    html = b.app.test_client().get('/').text
+    assert 'Datum &amp; Uhrzeit' in html or 'Datum & Uhrzeit' in html
+    assert 'formatDateTime(d.created_at)' in html
+
+
+def test_running_print_survives_store_reopen_without_duplicate_or_early_booking(bridge):
+    b = bridge
+    job = b.store.create_or_update_running_job('plate_1.gcode', 'Test', None)
+    b.store.update_job(job, weights_json='{"1":27.3}', filaments_json='{"1":{"material":"PLA","color":"FFFFFF"}}',
+                       observed_slots_json='[1]', spools_snapshot_json='{"20":{"remaining_weight":871.88}}')
+    b.store = b.Store(b.DB_PATH)
+    assert b.store.active_job_id() == job
+    assert b.store.create_or_update_running_job('plate_1.gcode', 'Test', None) == job
+    b.process_job(job)
+    assert len(b.store.list_jobs()) == 1
+    assert b.store.get_job(job)['observed_slots_json'] == '[1]'
+    assert b.store.get_job(job)['weights_json'] == '{"1":27.3}'
+    assert b.store.deductions_for_job(job) == []
+    assert b.store.get_job(job)['state'] == 'RUNNING'
+
+
+def test_ams_change_releases_current_assignment_but_preserves_print_snapshot(bridge):
+    b=bridge;enable_internal(b)
+    b.ams_state={0:dict(known=True,available=True,material='PLA',color='#FFFFFF')}
+    b.save_mapping({'0':'1'})
+    b.record_ams_changes()
+    job=b.store.create_or_update_running_job('test.gcode','Test',None)
+    original=b.store.get_job(job)['slot_mapping_json']
+    assert b.load_mapping()['0']=='1'
+    b.ams_state[0]['color']='#FF0000'
+    b.record_ams_changes()
+    assert b.load_mapping()['0'] is None
+    assert b.store.get_job(job)['slot_mapping_json']==original
+    b.save_mapping({'0':'1'})  # Explicit override is retained until another change.
+    b.record_ams_changes()
+    assert b.load_mapping()['0']=='1'
+    b.ams_state[0]['available']=False
+    b.record_ams_changes()
+    assert b.load_mapping()['0'] is None
+
+
+def test_removed_spool_history_survives_native_export_restore(bridge,tmp_path):
+    from bridge.inventory_db import apply_migrations,connection
+    from bridge.inventory_exchange import export_inventory,restore_inventory
+    from bridge.inventory_service import InventoryService
+    b=bridge;sid=enable_internal(b)
+    InventoryService(b.DB_PATH).adjust_stock(operation_key='old-correction',spool_id=sid,delta_grams=10)
+    with connection(b.DB_PATH) as db:db.execute('UPDATE spools SET archived=1 WHERE id=?',(sid,))
+    InventoryService(b.DB_PATH).remove_archived_spool(sid)
+    snapshot=export_inventory(b.DB_PATH)
+    assert snapshot['tables']['spools'][0]['removed_at']
+    target=tmp_path/'removed-restored.db';b.Store(target);apply_migrations(target);restore_inventory(target,snapshot)
+    assert export_inventory(target)==snapshot
+
+
+def test_cancelled_booking_details_and_log_explain_partial_amount(bridge):
+    b=bridge;sid=enable_internal(b)
+    job=b.store.create_manual_job(sid,0,1.62)
+    b.store.update_job(job,cancelled=1,estimated=1,progress=5)
+    b.process_job(job)
+    row=next(r for r in b.store.list_deductions() if r['job_id']==job)
+    assert row['status']=='DONE' and 'Teilmenge bis Abbruch gebucht' in row['detail']
+    assert '5%' in row['detail']
+    assert any('Teilmenge bis Abbruch gebucht' in line for line in b.log_buffer)
+
+
+def test_ams_write_is_confirmed_and_running_printer_is_blocked(bridge,monkeypatch):
+    import time
+    from unittest.mock import Mock
+    b=bridge;sid=enable_internal(b)
+    b.fetch_spoolman_spools=lambda:[dict(id=sid,material='PLA+',clean_color='#FFFFFF')]
+    b.ams_state[0].update(known=True,available=True,material='PLA',color='#FFFFFF',seen_at=time.time(),tray_info_idx='profile',nozzle_temp_min=190,nozzle_temp_max=240)
+    client=Mock();client.is_connected.return_value=True;client.publish.return_value.rc=0;b.mqtt_client=client
+    monkeypatch.setattr(b,'refresh_printer_status',lambda:True)
+    wait=Mock(return_value=True);monkeypatch.setattr(b.telemetry,'wait_for_ams_write',wait)
+    c=b.app.test_client();c.get('/settings')
+    with c.session_transaction() as session:token=session['csrf_token']
+    payload=dict(slot='0',spool_id=str(sid),confirm='write',csrf_token=token)
+    b.printer_status.update(state='RUNNING',state_seen_at=time.time())
+    assert c.post('/devices/ams/filament',data=payload).status_code==409
+    assert not client.publish.called
+    b.printer_status.update(state='IDLE',state_seen_at=time.time())
+    preview=c.get('/api/ams/selection',query_string=dict(slot='0',spool_id=str(sid),mode='write')).json
+    payload['review_token']=preview['token']
+    assert c.post('/devices/ams/filament',data=payload).status_code==200
+    command=json.loads(client.publish.call_args_list[0].args[1])['print']
+    assert command['command']=='ams_filament_setting' and command['tray_type']=='PLA'
+    assert client.publish.call_args_list[0].kwargs['qos']==0
+    assert wait.called and b.load_mapping()['0']==str(sid)
+    wait.return_value=False
+    payload['review_token']=c.get('/api/ams/selection',query_string=dict(slot='0',spool_id=str(sid),mode='write')).json['token']
+    before=b.load_mapping()
+    assert c.post('/devices/ams/filament',data=payload).status_code==504
+    assert b.load_mapping()==before
+
+
+def test_remaining_time_display_and_stale_estimates(bridge):
+    import time
+    b=bridge
+    status=dict(state='RUNNING',remaining_minutes=125,remaining_seen_at=time.time())
+    assert b.display_remaining_time(status)=='ca. 2 Std. 5 Min.'
+    assert b.display_remaining_time(dict(status,remaining_seen_at=0))=='Warte auf Zeitangabe'
+    assert b.display_remaining_time(dict(status,state='PAUSE')).startswith('Pausiert')
+    assert b.display_remaining_time(dict(status,state='FINISH'))=='Abgeschlossen'
+    assert b.display_remaining_time(dict(status,state='OFFLINE'))=='—'
+    html=b.app.test_client().get('/').text
+    assert 'remaining-time' in html and 'formatRemaining(data.printer)' in html
+
+
+def ams_test_context(b,monkeypatch):
+    import time
+    from unittest.mock import Mock
+    sid=enable_internal(b)
+    b.fetch_spoolman_spools=lambda:[dict(id=sid,material='PLA+',clean_color='#FFFFFF')]
+    b.ams_state[0].update(known=True,available=True,material='PLA',color='#FFFFFF',seen_at=time.time(),tray_info_idx='profile',nozzle_temp_min=190,nozzle_temp_max=240)
+    b.ams_state[1].update(b.ams_state[0])
+    client=Mock();client.is_connected.return_value=True;client.publish.return_value.rc=0;b.mqtt_client=client
+    monkeypatch.setattr(b,'refresh_printer_status',lambda:True)
+    monkeypatch.setattr(b.telemetry,'wait_for_ams_write',Mock(return_value=True))
+    b.printer_status.update(state='IDLE',state_seen_at=time.time())
+    c=b.app.test_client();c.get('/settings')
+    with c.session_transaction() as session:csrf=session['csrf_token']
+    return sid,c,csrf,client
+
+
+def reviewed_payload(c,sid,csrf,slot='0',mode='assign'):
+    preview=c.get('/api/ams/selection',query_string=dict(slot=slot,spool_id=str(sid) if sid else '',mode=mode))
+    assert preview.status_code==200,preview.json
+    return dict(slot=slot,spool_id=str(sid) if sid else '',csrf_token=csrf,confirm=mode,review_token=preview.json['token'])
+
+
+def test_slot_assignment_only_updates_reviewed_slot_and_never_mqtt(bridge,monkeypatch):
+    b=bridge;sid,c,csrf,mqtt=ams_test_context(b,monkeypatch)
+    b.save_mapping({'1':str(sid)})
+    payload=reviewed_payload(c,sid,csrf)
+    assert c.post('/devices/ams/assign',data=payload).status_code==200
+    assert b.load_mapping()['0']==str(sid) and b.load_mapping()['1']==str(sid)
+    assert not mqtt.publish.called
+    assert c.post('/devices/ams/assign',data=payload).status_code==409
+    payload=reviewed_payload(c,None,csrf)
+    assert c.post('/devices/ams/assign',data=payload).status_code==200
+    assert b.load_mapping()['0'] is None and b.load_mapping()['1']==str(sid)
+
+
+def test_changed_review_or_spool_and_explicit_mismatch_are_blocked(bridge,monkeypatch):
+    b=bridge;sid,c,csrf,mqtt=ams_test_context(b,monkeypatch)
+    payload=reviewed_payload(c,sid,csrf)
+    b.ams_state[0]['color']='#FF0000'
+    assert c.post('/devices/ams/assign',data=payload).status_code==409
+    payload=reviewed_payload(c,sid,csrf)
+    assert c.post('/devices/ams/assign',data=payload).status_code==400
+    payload['override']='yes'
+    assert c.post('/devices/ams/assign',data=payload).status_code==200
+    payload=reviewed_payload(c,sid,csrf,mode='write')
+    payload['review_token']='invalid'
+    assert c.post('/devices/ams/filament',data=payload).status_code==409
+    assert not mqtt.publish.called
+
+
+def test_printer_change_during_print_allows_unused_but_not_active_or_target(bridge,monkeypatch):
+    import time
+    b=bridge;sid,c,csrf,mqtt=ams_test_context(b,monkeypatch)
+    b.printer_status.update(state='RUNNING',active_slot=0,target_slot=2,target_slot_known=True,state_seen_at=time.time())
+    assert c.get('/api/ams/selection',query_string=dict(slot='0',spool_id=sid,mode='write')).status_code==409
+    assert c.get('/api/ams/selection',query_string=dict(slot='2',spool_id=sid,mode='write')).status_code==409
+    payload=reviewed_payload(c,sid,csrf,slot='1',mode='write')
+    assert c.post('/devices/ams/filament',data=payload).status_code==200
+    assert mqtt.publish.called
+    count=mqtt.publish.call_count
+    assert c.post('/devices/ams/filament',data=payload).status_code==409
+    assert mqtt.publish.call_count==count
+    payload=reviewed_payload(c,sid,csrf,slot='1',mode='write')
+    b.printer_status['active_slot']=1
+    assert c.post('/devices/ams/filament',data=payload).status_code==409
+    assert mqtt.publish.call_count==count
+
+
+def test_corrections_share_journal_but_do_not_create_deductions(bridge):
+    from bridge.inventory_service import InventoryService
+    b=bridge;sid=enable_internal(b);service=InventoryService(b.DB_PATH)
+    service.adjust_stock(operation_key='journal-delta',spool_id=sid,delta_grams=20,note='Restmenge nachgeprüft')
+    service.weigh_stock(operation_key='journal-weigh',spool_id=sid,gross_grams=1200,tare_grams=200)
+    rows=b.store.list_deductions()
+    corrections=[r for r in rows if r.get('entry_type')=='adjustment']
+    assert len(corrections)==2
+    assert any(r['filename']=='Wiegekorrektur' and '1200 g' in r['detail'] and '1000 g Bestand'==r['amount_label'] for r in corrections)
+    assert any(r['amount_label']=='+20 g' and 'Restmenge nachgeprüft' in r['detail'] for r in corrections)
+    with b.store.connection() as db:assert db.execute('SELECT count(*) FROM deductions').fetchone()[0]==0
+    html=b.app.test_client().get('/').text
+    assert 'Korrigiert' in html and 'Wiegekorrektur' in html and 'Bestandskorrektur' in html
+
+
+def test_relevant_mid_print_role_change_requires_review_before_booking(bridge,monkeypatch,tmp_path):
+    from bridge.inventory_db import connection,apply_migrations
+    from bridge.inventory_exchange import export_inventory,restore_inventory
+    import json
+    b=bridge;sid,c,csrf,mqtt=ams_test_context(b,monkeypatch)
+    b.save_mapping({'0':str(sid)})
+    job=b.store.create_or_update_running_job('test.gcode','Test',None)
+    b.store.update_job(job,weights_json='{"1":1}',filaments_json='{"1":{"material":"PLA","color":"FFFFFF"}}',observed_slots_json='[0]',spools_snapshot_json='{}')
+    before=b.store.get_job(job)['slot_mapping_json']
+    b.ams_assign_one('0',None,str(sid))
+    assert b.store.get_job(job)['slot_mapping_json']==before
+    with connection(b.DB_PATH) as db:assert db.execute("SELECT 1 FROM runtime WHERE key=?",('ams-job-review:'+job,)).fetchone()
+    target=tmp_path/'review-restored.db';b.Store(target);apply_migrations(target)
+    exported=export_inventory(b.DB_PATH);restore_inventory(target,exported);assert export_inventory(target)==exported
+    b.store.update_job(job,state='FINISH_PENDING')
+    b.process_job(job)
+    assert b.store.get_job(job)['state']=='WAITING_MAPPING'
+    assert b.store.deductions_for_job(job)==[]
+    assert b.store.set_job_mapping(job,[0])
+    with connection(b.DB_PATH) as db:assert not db.execute('SELECT 1 FROM runtime WHERE key=?',('ams-job-review:'+job,)).fetchone()
+    assert json.loads(b.store.get_job(job)['slot_mapping_json'])['0'] is None
+
+
+def auto_power_test_context(b):
+    from bridge.auto_power import AutoPowerOff
+    now=[1000];calls=[];safe=[True]
+    job=b.store.create_or_update_running_job('auto.gcode','Auto',None)
+    auto=AutoPowerOff(b.DB_PATH,lambda fresh:safe[0],lambda jobid:calls.append(jobid) or {'on':False},clock=lambda:now[0])
+    auto.configure(True,job,120)
+    return auto,job,now,calls,safe
+
+
+def complete_auto_job(b,job,state='DONE',cancelled=0):
+    b.store.update_job(job,state=state,cancelled=cancelled)
+    with b.store.connection() as db:db.execute("UPDATE runtime SET value=NULL WHERE key='active_job_id'")
+
+
+def test_auto_power_waits_for_booking_delay_and_is_one_shot(bridge):
+    b=bridge;auto,job,now,calls,safe=auto_power_test_context(b)
+    auto.poll();assert not calls
+    complete_auto_job(b,job,state='WAITING_MAPPING');auto.poll();assert auto.status()['phase']=='waiting_booking' and not calls
+    b.store.update_job(job,state='DONE');auto.poll();assert auto.status()['due_at']==1120
+    now[0]=1119;auto.poll();assert not calls
+    now[0]=1120;auto.poll();assert calls==[job] and not auto.status()['enabled']
+    auto.poll();assert calls==[job]
+
+
+def test_auto_power_cancels_for_new_print_or_abort_and_accepts_disable(bridge):
+    b=bridge;auto,job,now,calls,safe=auto_power_test_context(b)
+    complete_auto_job(b,job,cancelled=1);auto.poll();assert not auto.status()['enabled'] and not calls
+    job=b.store.create_or_update_running_job('next.gcode','Next',None);auto.configure(True,job)
+    complete_auto_job(b,job);auto.poll()
+    b.store.create_or_update_running_job('third.gcode','Third',None)
+    now[0]+=200;auto.poll();assert not calls and auto.status()['phase']=='cancelled'
+    job=b.store.active_job_id();auto.configure(True,job);auto.configure(False);auto.poll();assert not calls
+
+
+def test_auto_power_requires_fresh_safe_status_and_recovers_without_retrying_uncertain_switch(bridge):
+    from bridge.auto_power import AutoPowerOff
+    b=bridge;auto,job,now,calls,safe=auto_power_test_context(b)
+    complete_auto_job(b,job);safe[0]=False;auto.poll();assert not auto.status().get('due_at')
+    safe[0]=True;auto.poll();now[0]+=120;safe[0]=False;auto.poll();assert not calls
+    safe[0]=True;auto.poll();now[0]+=120
+    original=auto.switch_off
+    def guarded(jobid):
+        assert auto.permitted(jobid)
+        auto.configure(False)
+        assert not auto.permitted(jobid)
+        raise ValueError('Cancelled')
+    auto.switch_off=guarded;auto.poll();assert not calls and not auto.status()['enabled']
+
+
+def test_flow_allowance_frozen_per_job_and_booked_once(bridge, monkeypatch):
+    b=bridge
+    with b.store.connection() as db:
+        db.execute("INSERT INTO settings(key,value_json,updated_at) VALUES ('flow_calibration_allowance','true','test')")
+    job=finished_job(b, {1: 2.5, 2: 7})
+    with b.store.connection() as db:
+        db.execute("UPDATE settings SET value_json='false' WHERE key='flow_calibration_allowance'")
+    send=Mock(return_value=('DONE','test'))
+    monkeypatch.setattr(b,'send_spoolman_deduction',send)
+    b.DRY_RUN=False
+    b.process_job(job)
+    assert [r['grams'] for r in b.store.deductions_for_job(job)] == [4.5,9]
+    assert 'Flusskontrolle' in b.store.get_job(job)['estimate_reason']
+    calls=send.call_count
+    b.process_job(job)
+    assert send.call_count == calls
+
+
+def test_flow_allowance_zero_progress_does_not_deduct(bridge):
+    rows,_,_=bridge.plan_consumption({'cancelled':1,'progress':0,'flow_calibration_allowance':True}, {1:10},{},{},{})
+    assert not rows
