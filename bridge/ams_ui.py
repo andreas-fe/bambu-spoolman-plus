@@ -51,7 +51,7 @@ if(external)row.querySelector('[data-printer-color]').textContent='Spulenhalter 
 for(const option of select.options){if(!option.value)continue;const stock=stockAMS.find(s=>String(s.id)===option.value);option.hidden=!(all||matchesAMS(stock,tray)||option.selected)}
 if(spool)colorLabel(row.querySelector('[data-stock-color]'),spool.material,spool.clean_color);else row.querySelector('[data-stock-color]').textContent='Wähle die tatsächlich eingelegte Rolle.';
 row.querySelector('[data-binding]').textContent=dirty?'Noch nicht übernommen':savedAMS[slot]?'Zugeordnet':'Neue Zuordnung nötig';
-const status=row.querySelector('[data-match]');status.textContent=external?'Bestandszuordnung':!spool?'Rolle auswählen':!known?'Druckerangaben noch ungeprüft':match?'✓ Materialfamilie & Farbe passen':'Material & Farbe werden angepasst';status.style.color=match?'var(--accent)':'#efbd75';
+const status=row.querySelector('[data-match]');status.textContent=external?'Bestandszuordnung':!spool?'Rolle auswählen':!known?'Druckerangaben noch ungeprüft':match?'✓ Materialfamilie & Farbe passen':'Material & Farbe werden angepasst';status.style.color=match?'var(--accent)':'var(--warning)';
 const main=row.querySelector('[data-main]');main.textContent=external?'Bestand zuordnen …':'← An Drucker senden …';main.disabled=!!amsBusy||!spool||(external&&!dirty)||(!external&&!!writeReasonAMS(slot));
 const assign=row.querySelector('[data-assign]');if(assign){assign.hidden=!spool;assign.disabled=!!amsBusy}
 const clear=row.querySelector('[data-clear]');clear.hidden=!savedAMS[slot];clear.disabled=!!amsBusy;

@@ -12,10 +12,11 @@ NAVIGATION = (
 )
 
 STYLE = r'''
-:root{color-scheme:dark;--bg:#10161f;--surface:#192330;--raised:#202e3e;--line:#344357;--text:#edf2f8;--muted:#a6b6ca;--accent:#67dec0;--primary:#126a58}
+:root{color-scheme:dark;--bg:#10161f;--surface:#192330;--raised:#202e3e;--line:#344357;--text:#edf2f8;--muted:#a6b6ca;--accent:#67dec0;--primary:#126a58;--input:#111c29;--soft:#111d2a;--log:#0c1621;--canvas:#10212a;--glow:#1e3448;--card-from:#1a2b3b;--card-to:#14212e;--warning:#efbd75}
+html[data-theme=light]{color-scheme:light;--bg:#f3f6f7;--surface:#fff;--raised:#e9eff1;--line:#c7d3d8;--text:#1d3038;--muted:#526770;--accent:#087457;--primary:#0b7258;--input:#fff;--soft:#f0f5f6;--log:#f4f7f8;--canvas:#edf3f4;--glow:#e2f1ed;--card-from:#fff;--card-to:#f1f7f5;--warning:#855300}
 *{box-sizing:border-box}
 [hidden],input[type=hidden]{display:none!important}
-body{margin:0;background:radial-gradient(ellipse at 0 0,#1e3448 0,transparent 55%),var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
+body{margin:0;background:radial-gradient(ellipse at 0 0,var(--glow) 0,transparent 55%),var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 button,input,select,textarea{font:inherit}
@@ -26,7 +27,7 @@ button.quiet,.button.quiet{background:transparent;color:var(--muted);border-colo
 button.danger{background:#5a303c}
 button:disabled{opacity:.5;cursor:wait}
 a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
-input:not([type=hidden]):not([type=checkbox]):not([type=color]),select,textarea{display:block;width:100%;min-height:44px;border:1px solid #465970;border-radius:10px;padding:10px 12px;background:#111c29;color:var(--text)}
+input:not([type=hidden]):not([type=checkbox]):not([type=color]),select,textarea{display:block;width:100%;min-height:44px;border:1px solid #465970;border-radius:10px;padding:10px 12px;background:var(--input);color:var(--text)}
 input::placeholder,textarea::placeholder{color:#8c9db2}
 input[type=checkbox]{accent-color:var(--accent);width:20px;height:20px;flex-shrink:0}
 input[type=color]{width:48px;min-width:48px;height:44px;padding:3px;border:1px solid var(--line);background:transparent;border-radius:10px}
@@ -38,6 +39,7 @@ h2{font-size:20px;letter-spacing:-.02em;margin:0 0 10px}
 h3{font-size:17px;margin:0 0 10px}
 p{margin:8px 0 16px}
 .app-header{max-width:1240px;margin:auto;padding:26px 24px 0}
+.header-top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.theme-toggle{flex-shrink:0;font-size:13px;min-height:38px;padding:8px 12px}
 .brand{display:flex;align-items:center;gap:13px;color:var(--text);width:fit-content;font-weight:750;font-size:18px;letter-spacing:-.025em}
 .brand:hover{text-decoration:none}
 .brand-mark{width:34px;height:34px;border:7px solid var(--accent);outline:1px solid #67dec050;border-radius:50%;box-shadow:inset 0 0 0 3px var(--bg)}
@@ -59,12 +61,12 @@ main{max-width:1240px;margin:auto;padding:30px 24px 64px}
 .form-grid .wide{grid-column:1/-1}
 .field-help{color:var(--muted);font-weight:400;font-size:13px}
 .form-actions{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
-.editor{margin-top:22px;padding:22px;background:#111d2a;border:1px solid #44617a;border-radius:14px}
+.editor{margin-top:22px;padding:22px;background:var(--soft);border:1px solid #44617a;border-radius:14px}
 .editor h3{margin-bottom:20px}
 .editor details{margin-top:20px}
 .editor summary{color:var(--muted);font-size:14px}
 .editor details[open] summary{margin-bottom:18px}
-.subtabs{display:flex;gap:7px;flex-wrap:wrap;padding:6px;background:#111d2a;border:1px solid var(--line);border-radius:13px;margin:0 0 24px}
+.subtabs{display:flex;gap:7px;flex-wrap:wrap;padding:6px;background:var(--soft);border:1px solid var(--line);border-radius:13px;margin:0 0 24px}
 .subtabs button{background:transparent;color:var(--muted);min-height:40px;border-radius:8px}
 .subtabs button[aria-selected=true]{background:var(--raised);color:var(--text);box-shadow:0 2px 8px #0003}
 .subtabs .count{padding:1px 7px;border-radius:6px;background:#ffffff12;font-size:12px}
@@ -87,12 +89,12 @@ tbody tr:last-child td{border-bottom:0}
 .badge.good{color:#9af0ce;background:#1d5b4350}
 .notice,.warn-banner{padding:15px 18px;border:1px solid #746331;background:#66532240;border-radius:12px;color:#f0dca6;margin:0 0 22px}
 .notice.success{color:#a8f0d7;border-color:#347760;background:#234b3b60}
-.summary-box{padding:16px 18px;background:#0d1a26;border:1px solid var(--line);border-radius:12px;margin:18px 0;color:var(--muted)}
+.summary-box{padding:16px 18px;background:var(--soft);border:1px solid var(--line);border-radius:12px;margin:18px 0;color:var(--muted)}
 .summary-box strong{color:var(--text)}
 .toolbar{display:grid;grid-template-columns:minmax(180px,2fr) repeat(3,minmax(130px,1fr));gap:14px;margin-bottom:16px}
 .toolbar label{font-size:13px}
 .spool-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:18px}
-.spool-card{padding:22px;background:linear-gradient(145deg,#1a2b3b,#14212e);border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column}
+.spool-card{padding:22px;background:linear-gradient(145deg,var(--card-from),var(--card-to));border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column}
 .spool-card h3{font-size:23px;letter-spacing:-.025em;margin:12px 0 4px}
 .spool-card .actions{margin-top:auto;padding-top:16px}
 .spool-card .actions button{font-size:13px;padding:9px 12px}
@@ -114,7 +116,7 @@ tbody tr:last-child td{border-bottom:0}
 .setting small{display:block;margin-top:4px;max-width:65ch}
 .setting:last-of-type{border:0}
 .printer-heading{display:grid!important;grid-template-columns:minmax(0,1fr) auto 190px;gap:18px}.printer-illustration svg{width:100%;max-height:190px;display:block}.printer-illustration .printer-print-line{opacity:.45}.printer-illustration.printing .printer-print-line{opacity:1;animation:filament-flow 2s linear infinite}@keyframes filament-flow{to{stroke-dashoffset:-16}}@media(prefers-reduced-motion:reduce){.printer-illustration.printing .printer-print-line{animation:none}}@media(max-width:760px){.printer-heading{grid-template-columns:minmax(0,1fr) 120px}.printer-heading>div:nth-child(2){grid-column:1/-1;grid-row:2}.printer-illustration{grid-column:2;grid-row:1}}
-.status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;background:#111d2a;border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:22px}
+.status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:22px}
 .status>div{display:flex;flex-wrap:wrap;align-items:center;gap:7px}
 .status>div>.muted{display:block;width:100%;font-size:12px}
 .top{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
@@ -122,7 +124,7 @@ tbody tr:last-child td{border-bottom:0}
 .slot:last-of-type{border:0}
 .swatch{display:inline-block;width:15px;height:15px;border:1px solid #ffffff80;border-radius:50%;vertical-align:middle;margin-right:7px}
 .manual-grid{display:grid;grid-template-columns:minmax(240px,1fr) 150px auto;gap:14px;align-items:end}
-.logs{height:200px;overflow:auto;background:#0c1621;border:1px solid var(--line);border-radius:10px;padding:14px;font:12px/1.7 ui-monospace,monospace;white-space:pre-wrap}
+.logs{height:200px;overflow:auto;background:var(--log);border:1px solid var(--line);border-radius:10px;padding:14px;font:12px/1.7 ui-monospace,monospace;white-space:pre-wrap}
 .diagnostics summary{cursor:pointer;font-weight:650}
 .diagnostics[open] summary{margin-bottom:18px}
 .settings-width{max-width:850px}
@@ -163,7 +165,7 @@ th,td{padding:11px 9px}
 .spool-card progress::-moz-progress-bar{background:var(--accent);border-radius:5px}
 @media(max-width:600px){.inventory-table thead{display:none}
 .inventory-table tbody{display:grid;gap:14px}
-.inventory-table tr{display:block;border:1px solid var(--line);border-radius:12px;padding:8px 12px;background:#111d2a}
+.inventory-table tr{display:block;border:1px solid var(--line);border-radius:12px;padding:8px 12px;background:var(--soft)}
 .inventory-table td{display:block;padding:10px 0}
 .inventory-table td[data-label]{display:grid;grid-template-columns:95px minmax(0,1fr);gap:10px;word-break:break-word}
 .inventory-table td[data-label]::before{content:attr(data-label);color:var(--muted);font-size:12px;font-weight:400}
@@ -174,9 +176,23 @@ th,td{padding:11px 9px}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}
 }
 
+html[data-theme=light] .nav-item:hover{background:#e5eeeb}
+html[data-theme=light] .nav-item.active{background:#dcefe7;color:#095d46}
+html[data-theme=light] .badge.good,html[data-theme=light] .notice.success{color:#145b41;background:#e5f3eb;border-color:#8dbda5}
+html[data-theme=light] .notice,html[data-theme=light] .warn-banner{color:#674b12;background:#fff4d8;border-color:#cbb670}
+html[data-theme=light] .ams-visual-wrap{background:linear-gradient(140deg,#f7faf9,#eaf2ef)}
+html[data-theme=light] .ams-visual>rect{fill:var(--canvas);stroke:var(--line)}
+html[data-theme=light] .ams-visual text:not([data-visual-ink]),html[data-theme=light] .printer-illustration text{fill:var(--muted)}
+html[data-theme=light] .ams-review{background:#edf8f3}
+html[data-theme=light] .file-preview{background:var(--soft)}
+html[data-theme=light] .swatch,html[data-theme=light] .swatch-large{border-color:#607b8580}
+html[data-theme=light] input::placeholder,html[data-theme=light] textarea::placeholder{color:#687b83}
+html[data-theme=light] .subtabs .count{background:#1d303810}
+html[data-theme=light] .card,html[data-theme=light] .panel{box-shadow:0 6px 24px #183b3010}
+
 '''
 
-SHELL = '''<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{title}} · Bambu-Spoolman-Plus</title><style>{{style|safe}}</style></head><body><header class="app-header"><a class="brand" href="/" aria-label="Bambu-Spoolman-Plus Startseite"><span class="brand-mark" aria-hidden="true"></span><span>Bambu-Spoolman-Plus<small>Filamente im Blick. Drucker unter Kontrolle.</small></span></a><nav class="app-nav" aria-label="Hauptnavigation">{% for key,url,label,description in navigation %}<a class="nav-item{% if active==key %} active{% endif %}" href="{{url}}" {% if active==key %}aria-current="page"{% endif %}>{{label}}<small>{{description}}</small></a>{% endfor %}</nav></header><main id="main-content">{{body}}</main><footer class="app-footer">Bambu-Spoolman-Plus · Dein Filamentlager</footer></body></html>'''
+SHELL = '''<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><script>(()=>{let theme='dark';try{if(localStorage.getItem('plus-theme')==='light')theme='light'}catch{}document.documentElement.dataset.theme=theme;window.toggleTheme=()=>{const next=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=next;try{localStorage.setItem('plus-theme',next)}catch{}sync()};function sync(){const b=document.getElementById('theme-toggle');if(!b)return;const light=document.documentElement.dataset.theme==='light';b.textContent=light?'☾ Dunkles Design':'☀ Helles Design';b.setAttribute('aria-label',light?'Zum dunklen Design wechseln':'Zum hellen Design wechseln')}document.addEventListener('DOMContentLoaded',sync)})();</script><title>{{title}} · Bambu-Spoolman-Plus</title><style>{{style|safe}}</style></head><body><header class="app-header"><div class="header-top"><a class="brand" href="/" aria-label="Bambu-Spoolman-Plus Startseite"><span class="brand-mark" aria-hidden="true"></span><span>Bambu-Spoolman-Plus<small>Filamente im Blick. Drucker unter Kontrolle.</small></span></a><button id="theme-toggle" type="button" class="quiet theme-toggle" onclick="toggleTheme()" aria-label="Zum hellen Design wechseln">☀ Helles Design</button></div><nav class="app-nav" aria-label="Hauptnavigation">{% for key,url,label,description in navigation %}<a class="nav-item{% if active==key %} active{% endif %}" href="{{url}}" {% if active==key %}aria-current="page"{% endif %}>{{label}}<small>{{description}}</small></a>{% endfor %}</nav></header><main id="main-content">{{body}}</main><footer class="app-footer">Bambu-Spoolman-Plus · Dein Filamentlager</footer></body></html>'''
 
 
 def render_ui(template, *, active, title, **context):
@@ -195,7 +211,7 @@ def render_form_error(message):
 STYLE += '''
 .camera-toolbar{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--line)}
 .meter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:20px 0}
-.meter-card{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:14px;background:#111d2a;padding:22px}
+.meter-card{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:14px;background:var(--soft);padding:22px}
 .meter-card>span,.meter-card>small{color:var(--muted);font-size:13px}.meter-card>strong{font-size:32px;letter-spacing:-.03em}.meter-card.primary{border-color:#3d8a75;background:#183b3350}.meter-card.primary>strong{color:var(--accent)}
 .live-controls{display:flex;align-items:center;gap:24px;flex-wrap:wrap;padding:20px 0}.live-toggle{flex-direction:row;align-items:center;gap:10px}
 @media(max-width:850px){.meter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

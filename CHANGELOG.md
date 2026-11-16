@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-16 — Große 3MF-Vorschauen und umschaltbares Design
+
+- Vorschaubilder werden direkt während des Lesens der ZIP-Einträge erkannt. Nach dem Bild und dessen erfolgreicher Prüfsummenprüfung wird der Transfer beendet; der nachfolgende G-Code muss nicht heruntergeladen werden. Keine REST-Unterstützung am Drucker erforderlich.
+- Stream-ZIPs mit Datenbeschreibungen, gespeicherten oder Deflate-Einträgen und ZIP64 werden unterstützt. Die bisherige 24-MiB-Grenze der Gesamtdatei entfällt. Stattdessen gelten Grenzen für gelesenen Archivanfang, entpackte Daten, Bildgröße und Laufzeit. Verbindungsfehler werden nicht mehr als vermeintlich fehlendes Bild erklärt.
+- Helles und dunkles Design mit browserseitig gespeicherter Auswahl in allen Bereichen; angepasste Eingaben, Karten, Tabellen, Hinweise und AMS-Grafik. Tatsächliche Filamentfarben bleiben erhalten.
+- 192 Tests lokal und im NAS-Container bestanden; Browserprüfung für sechs Bereiche, Speicherung, Mobilansicht und unverändertes Vorschau-Caching. Die drei betroffenen realen Vorschauen konnten vor dem Deployment mit dem neuen Leser in etwa einer Sekunde geladen werden; nach dem Deployment wurden alle drei über die App samt Cachetreffer und Inline-Bild verifiziert. Vollständige Sicherung, verlustfreier Testimport, Health und unveränderte Bestände/Zuordnungen/Journal geprüft. Keine Druckerdateien verändert.
+
 ## 2026-11-16 — Persistente Modellminiaturen im Druckerspeicher
 
 - Vorschaubilder werden unabhängig vom Inventar im NAS-Datenverzeichnis zwischengespeichert und neben dem Vorschau-Button angezeigt. Bereits vorhandene Bilder benötigen beim Öffnen keinen neuen FTPS-Transfer.

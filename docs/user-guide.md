@@ -197,7 +197,7 @@ Der eigene Reiter liest Druckdateien direkt über FTPS vom Drucker. Die Bereiche
 
 - Suche nach Dateiname; Sortierung nach Name, Größe oder der Drucker-Datumsangabe. Die FTP-Angabe kann ohne Jahr sein; die Datumssortierung verwendet in diesem Fall eine Jahresannahme. Es wird keine exakte Aufnahmezeit behauptet.
 - Bereits im App-Cache vorhandene Bilder erscheinen als kleine Miniatur direkt neben dem Vorschau-Button. „Vorschau öffnen“ vergrößert sie. Beim erneuten Aufruf wird die 3MF nicht erneut vom Drucker geladen.
-- „Vorschau laden“ liest bei bestätigtem Leerlauf einzeln ein gespeichertes PNG-/JPEG-Modellbild aus dem Druckarchiv. Übliche Bambu-Plattenbilder werden berücksichtigt. Das ist keine drehbare 3D-Neuberechnung. Bei reinem G-Code, fehlendem Bild, zu großen Archiven oder zu langsamer Übertragung wird der Grund angezeigt. Begrenzung: 24 MiB Archiv und 2 MiB eingebettetes Bild.
+- „Vorschau laden“ liest bei bestätigtem Leerlauf einzeln ein gespeichertes PNG-/JPEG-Modellbild aus dem Druckarchiv. Übliche Bambu-Plattenbilder werden berücksichtigt. Das ist keine drehbare 3D-Neuberechnung. Bei reinem G-Code, fehlendem Bild oder zu langsamer Übertragung wird der Grund angezeigt. Das Archiv wird fortlaufend nur bis zum ersten unterstützten Bild gelesen; nach erfolgreicher Prüfsummenprüfung endet die Übertragung vor dem großen G-Code. Die Gesamtgröße der 3MF ist dafür nicht mehr auf 24 MiB beschränkt. Gelesen werden höchstens 8 MiB Archivanfang, das Bild darf höchstens 2 MiB groß sein. Liegt es weiter hinten, wird die Grenze verständlich gemeldet. Auch ZIP-Datenbeschreibungen und ZIP64-Größen werden berücksichtigt. Der Drucker muss dafür keine Teilabrufe unterstützen.
 - Eine oder mehrere Dateien auswählen, „Auswahl löschen …“ öffnen, die konkreten Dateinamen prüfen und die endgültige Löschung ausdrücklich bestätigen. Keine automatische Speicherbereinigung. Maximal 50 Dateien je Auswahl; ein Zeitlimit kann einen großen Stapel vorzeitig stoppen.
 - Vor der ersten Löschung wird die Auswahl erneut geprüft. Vor jeder Datei müssen Druckerleerlauf und Auftragszustand weiterhin passen; Dateigröße und Datum werden erneut verglichen. Laufende oder offene Aufträge schützen ihre Dateien. Bei Teilfehlern bleiben bereits erfolgte Löschungen bestehen; die Liste wird neu gelesen. Nicht ungeprüft wiederholen.
 
@@ -283,7 +283,7 @@ Die dokumentierte Startanfrage kennt `flow_cali`. Das ist keine hier nachgewiese
 
 | Beobachtung | Prüfung |
 |---|---|
-| AMS-Schreibbefehl abgelehnt, etwa 84033543 | Nach Druckende LAN-only und Entwicklermodus, aktuellen Code und Verbindung prüfen. Modus nicht während eines Drucks wechseln. |
+| AMS-Schreibbefehl abgelehnt | Nach Druckende LAN-only und Entwicklermodus, aktuellen Code und Verbindung prüfen. Modus nicht während eines Drucks wechseln. |
 | Kein geeignetes AMS-Profil | Materialtyp zuerst über Bambu Studio setzen; keine Kennungen oder Temperaturen erraten. |
 | Rolle gewählt, Drucker unverändert | Auswahl ist nur Entwurf; Vorschau öffnen und bestätigen. Fehlermeldung beziehungsweise unklare Rückmeldung prüfen. |
 | Schacht während Druck gesperrt | Aktiver oder angeforderter Schacht, unbekannte Slotlage oder veralteter Status. |
@@ -295,3 +295,9 @@ Die dokumentierte Startanfrage kennt `flow_cali`. Das ist keine hier nachgewiese
 Die Anwendung ist auf einen Drucker und dessen AMS Lite zugeschnitten. Eine beliebige Mehrdruckersteuerung, automatisches physisches Rollenladen, slicerbezogene Profilkalibrierung, temperaturgeführtes Ausschalten und eine automatische Erkennung der aktivierten Flusskontrolle sind hier nicht implementiert. Zusätzliche lokale Firmwarebefehle durch Developer Mode sind keine automatisch bereits integrierten App-Funktionen.
 
 Private `.env`, Zugänge, Schlüssel, Datenbanken, Logs, Inventarexporte und Backups außerhalb von Git aufbewahren. Vollständige Exporte können eigene Notizen und historische Datensätze enthalten. Installation und Wiederherstellung: [Betrieb](plus-operations.md). Entwicklungs- und Hardwareprüfung: [Deployment und Prüfung](../DEPLOYMENT.md).
+
+## Helles und dunkles Design
+
+Oben rechts lässt sich mit „Helles Design“ beziehungsweise „Dunkles Design“ die Darstellung umschalten. Die Auswahl gilt für alle Bereiche und wird in diesem Browser gespeichert. Andere Geräte können unabhängig ein anderes Design verwenden. Falls der Browser das Speichern blockiert, funktioniert der Wechsel auf der aktuellen Seite weiterhin. Ohne gespeicherte Auswahl bleibt das bisherige dunkle Design aktiv. Filamentfarben werden durch den Designwechsel nicht verändert.
+
+![Helles Design mit Druckerstatus und AMS – ausschließlich Beispieldaten](assets/current/light-overview.png)

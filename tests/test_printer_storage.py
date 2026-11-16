@@ -1,7 +1,8 @@
 import io,zipfile
 import pytest
 from flask import Flask
-from bridge.printer_storage import safe_file,parse_listing,thumbnail,register_storage
+from bridge.printer_storage import safe_file,parse_listing,register_storage
+from bridge.archive_preview import streamed_thumbnail
 
 
 def test_paths_listing_and_thumbnail():
@@ -12,8 +13,8 @@ def test_paths_listing_and_thumbnail():
     assert len(rows)==1 and rows[0]['path']=='/cache/My file.3mf'
     data=io.BytesIO()
     with zipfile.ZipFile(data,'w') as z:z.writestr('Metadata/plate_1.png',b'\x89PNG\r\n\x1a\nexample')
-    assert thumbnail(data.getvalue())[1]=='image/png'
-    with pytest.raises(Exception):thumbnail(b'invalid')
+    assert streamed_thumbnail(io.BytesIO(data.getvalue()).read)[1]=='image/png'
+    with pytest.raises(Exception):streamed_thumbnail(io.BytesIO(b'invalid').read)
 
 
 class FTP:
@@ -71,7 +72,10 @@ def test_preview_cache_avoids_transfer_and_works_without_idle():
     archive=io.BytesIO()
     with zipfile.ZipFile(archive,'w') as z:z.writestr('Metadata/plate_1.png',b'\x89PNG\r\n\x1a\nexample')
     data=archive.getvalue();ftp=FTP();ftp.size=len(data);calls=[]
-    ftp.retrbinary=lambda command,write:(calls.append(command),write(data))
+    class Stream(io.BytesIO):
+        def recv(self,size):return self.read(size)
+    ftp.voidcmd=lambda command:None
+    ftp.transfercmd=lambda command:(calls.append(command),Stream(data))[1]
     app=Flask(__name__);app.secret_key='cache-test';idle=[True]
     register_storage(app,lambda:ftp,lambda n:None,lambda:idle[0],lambda s:None)
     client=app.test_client();entry=client.get('/api/storage?folder=/cache').json['files'][0]
@@ -89,3 +93,25 @@ def test_preview_cache_avoids_transfer_and_works_without_idle():
     assert client.post('/storage/preview-cache/clear',data={'confirm':'clear-previews'}).status_code==200
     assert client.get(cached['preview_url']).status_code==404
     assert not ftp.deleted
+
+
+def test_large_archive_preview_stops_before_gcode_and_rechecks_idle():
+    from tests.test_archive_preview import archive
+    data=archive(stream=True);ftp=FTP();ftp.size=60*1024*1024
+    reads=[];streams=[]
+    class Stream(io.BytesIO):
+        def recv(self,size):
+            data=self.read(size);reads.append(len(data));return data
+    def transfer(command):
+        stream=Stream(data);streams.append(stream);return stream
+    ftp.voidcmd=lambda command:None;ftp.transfercmd=transfer
+    app=Flask(__name__);app.secret_key='large-test';idle=[False]
+    register_storage(app,lambda:ftp,lambda n:None,lambda:idle[0],lambda s:None)
+    client=app.test_client();entry=client.get('/api/storage?folder=/cache').json['files'][0]
+    assert client.post('/storage/preview',data={'file':entry['token']}).status_code==409 and not reads
+    idle[0]=True;ftp.size+=1
+    assert client.post('/storage/preview',data={'file':entry['token']}).status_code==400 and not reads
+    ftp.size-=1
+    r=client.post('/storage/preview',data={'file':entry['token']})
+    assert r.status_code==200 and r.mimetype=='image/png'
+    assert sum(reads)<=65536 and all(s.closed for s in streams) and ftp.closed and not ftp.deleted

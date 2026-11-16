@@ -14,7 +14,7 @@ Nach Deployment `/health`, tatsächlichen Backend-/Simulationsmodus, Inventarsei
 
 ## Automatisierte Prüfung
 
-**179 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
+**192 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
 
 Temporäre Testdaten auf NAS möglichst im Arbeitsspeicher (`--tmpfs /tmp:rw,size=256m`) halten. Das vermeidet langsame SQLite-Schreibtests im Container-Layer. Niemals produktive Datenverzeichnisse in einen Testlauf mounten.
 
@@ -51,3 +51,9 @@ Am Referenz-A1 wurden Hauptverzeichnis und Druckcache erfolgreich gelesen; ein k
 Der entbehrliche Vorschaubildcache ist eine separate private SQLite-Datei im persistenten Datenverzeichnis. Er ist nicht Bestandteil des Inventar-JSON-Exports. Cachetests prüfen Persistenz, Druckertrennung, Größen-/Anzahlgrenzen, Verdrängung, Ablauf, veränderte Dateiangaben und Wiederverwendung ohne erneuten Transfer.
 
 Am Referenz-A1 wurden Vorschau, unmittelbar folgender Cachetreffer und die Inline-Bildroute mit identischen Bilddaten geprüft. Der zweite Vorschauaufruf bestätigte `X-Preview-Cache: hit`. Dabei wurden keine Druckerdateien verändert oder gelöscht.
+
+Die Vorschau liest ZIP-Einträge sequenziell und beendet den FTPS-Transfer nach dem eingebetteten Bild. ZIP-Datenbeschreibungen (bei zunächst unbekannten Größen), Prüfsummen und ZIP64 werden geprüft. Grenzen: 8 MiB übertragener Archivanfang, 2 MiB Bild, 64 MiB insgesamt entpackte Daten und 30 Sekunden Lesezeit; keine vollständigen Massendownloads. Größere 3MF-Dateien bleiben möglich, wenn das Bild früh genug liegt. Der Referenz-A1 unterstützt keine REST-Teilabrufe; der sequenzielle Weg benötigt sie nicht.
+
+Drei zuvor wegen Zeitüberschreitung fehlgeschlagene reale 3MF-Vorschauen wurden vor dem Deployment mit dem neuen Leser erfolgreich geprüft. Nur 16–45 KB wurden dafür gelesen, statt der vollständigen Archive mit etwa 6,8–21,5 MB. Dateinamen und Modellbilder bleiben privat. Der Designwechsel wurde in allen sechs Bereichen im Browser geprüft, einschließlich Speicherung, Rückwechsel und Mobilansicht. Ein produktiver Druckstart aus der Dateiliste ist noch nicht implementiert.
+
+Nach Aktivierung des NAS-Containers wurden alle drei betroffenen Vorschauen über die produktiven App-Routen erfolgreich geladen. Zweiter Aufruf und Inline-Bild lieferten jeweils identische Cachebilder. Alle sechs Seiten antworteten erfolgreich; Health war gesund. Filamentprodukte, Rollenbestände, AMS-Bindungen und Journal wurden gegen den vorher gesicherten Export verglichen und blieben unverändert. Die vollständige Sicherung wurde per SHA-256 geprüft und der Inventarexport vor Aktivierung in eine getrennte leere Datenbank verlustfrei zurückimportiert.

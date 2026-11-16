@@ -1,20 +1,18 @@
 """Bounded, explicit SD file management over the existing printer FTPS client."""
-import io
+import ftplib
 import re
 import threading
 import time
-import zipfile
 from contextlib import contextmanager
 from pathlib import PurePosixPath
 from flask import jsonify,request,session,Response,url_for
 from itsdangerous import URLSafeTimedSerializer,BadSignature
 from .ui import render_ui
 from .preview_cache import PreviewCache
+from .archive_preview import streamed_thumbnail
 
 FOLDERS=('/', '/cache', '/model')
 EXTENSIONS=('.3mf','.gcode')
-MAX_PREVIEW_ARCHIVE=24*1024*1024
-MAX_IMAGE=2*1024*1024
 
 
 def safe_file(folder,name):
@@ -35,17 +33,6 @@ def parse_listing(lines,folder):
         rows.append(dict(path=path,name=parts[8],size=size,modified=' '.join(parts[5:8])))
     return sorted(rows,key=lambda r:r['name'].casefold())
 
-
-def thumbnail(data):
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        images=[i for i in archive.infolist() if i.filename.lower().startswith(('metadata/','auxiliaries/')) and i.filename.lower().endswith(('.png','.jpg','.jpeg')) and ('thumbnail' in i.filename.lower() or re.fullmatch(r'metadata/plate_[0-9]+(?:_small)?\.png',i.filename.lower()))]
-        images.sort(key=lambda i:(i.filename.lower()!='metadata/plate_1.png','thumbnail.png' not in i.filename.lower(),i.file_size))
-        for info in images:
-            if not 0<info.file_size<=MAX_IMAGE or info.file_size>max(1,info.compress_size)*200:continue
-            image=archive.read(info)
-            if image.startswith(b'\x89PNG\r\n\x1a\n'):return image,'image/png'
-            if image.startswith(b'\xff\xd8\xff'):return image,'image/jpeg'
-    raise ValueError('Die Datei enthält kein unterstütztes Vorschaubild. Es wird kein 3D-Modell neu berechnet.')
 
 
 class Storage:
@@ -71,6 +58,18 @@ class Storage:
         actual=next((r for r in self.listing(ftp,folder) if r['path']==entry['path']),None)
         if actual!=entry:raise ValueError('Datei wurde geändert oder entfernt. Liste neu laden.')
         return actual
+
+    def preview_image(self,entry):
+        ftp=self.factory()
+        try:
+            self.checked(ftp,entry)
+            ftp.voidcmd('TYPE I')
+            with ftp.transfercmd('RETR '+entry['path']) as stream:
+                return streamed_thumbnail(stream.recv)
+        finally:
+            # The thumbnail precedes the G-code. Close both channels rather than
+            # waiting for the rest of RETR or reusing an unfinished FTP session.
+            ftp.close()
 
 
 def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namespace=""):
@@ -125,19 +124,11 @@ def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namesp
             entry=decode(request.form.get('file'))
             if not refresh_idle():return jsonify(error='Vorschauen bitte im bestätigten Leerlauf laden.'),409
             if not entry['name'].lower().endswith('.3mf'):raise ValueError('Für reine G-Code-Dateien liegt keine Modellvorschau vor.')
-            if entry['size']>MAX_PREVIEW_ARCHIVE:raise ValueError('Datei für diese Vorschau zu groß (maximal 24 MiB).')
-            with storage.connection() as ftp:
-                storage.checked(ftp,entry);data=io.BytesIO();deadline=time.monotonic()+25
-                def write(chunk):
-                    if time.monotonic()>deadline:raise ValueError('Vorschau dauert zu lange. Erneut im Leerlauf versuchen.')
-                    if data.tell()+len(chunk)>MAX_PREVIEW_ARCHIVE:raise ValueError('Vorschaudatei überschreitet die Größenbegrenzung.')
-                    data.write(chunk)
-                ftp.retrbinary('RETR '+entry['path'],write)
-                if data.tell()!=entry['size']:raise ValueError('Datei nicht vollständig gelesen. Erneut versuchen.')
-            image,mime=thumbnail(data.getvalue());cache.put(entry,image,mime)
+            image,mime=storage.preview_image(entry);cache.put(entry,image,mime)
             return Response(image,mimetype=mime,headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
         except ValueError as exc:return jsonify(error=str(exc)),400
-        except Exception:return jsonify(error='Vorschau nicht verfügbar. Datei enthält eventuell kein passendes Vorschaubild.'),503
+        except (OSError,ftplib.Error):return jsonify(error='Vorschaubild konnte nicht vom Drucker gelesen werden. Verbindung prüfen und im Leerlauf erneut versuchen.'),503
+        except Exception:return jsonify(error='Vorschaubild konnte aus diesem Druckarchiv nicht gelesen werden.'),503
         finally:storage.lock.release()
     @app.post('/storage/delete')
     def delete():
