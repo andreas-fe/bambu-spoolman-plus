@@ -9,7 +9,7 @@ Lokale Docker-Anwendung für Bambu Lab A1/A1 mini und AMS Lite: Filamentbestand 
 ## Funktionen
 
 - **Druckübersicht:** Zustand, Fortschritt, Datei, aktiver AMS-Schacht und vom Drucker gemeldete Restzeit; schematische A1-Darstellung.
-- **Grafisches AMS Lite:** Rolle auswählen, Material-/Farbänderung prüfen und bestätigen; Bestandsbindung erst nach erfolgreicher Druckerrückmeldung. Änderungen an eindeutig inaktiven Schächten sind auch während eines Drucks möglich; aktive und angeforderte Schächte bleiben geschützt.
+- **Grafisches AMS Lite:** Rolle auswählen, Material, Farbe und dynamische Drucksteuerung prüfen und bestätigen; gerichteter Abgleich zwischen Drucker und Bestand, Bestandsbindung erst nach vollständiger Druckerrückmeldung. Änderungen an eindeutig inaktiven Schächten sind auch während eines Drucks möglich; aktive und angeforderte Schächte bleiben geschützt.
 - **Integriertes Inventar:** Hersteller, Produkte, physische Rollen und Lagerorte; Suchfilter, sortierbare Tabellen, getrennte Leergewichte und freie Zusatzangaben. Hersteller direkt im Produktdialog anlegen.
 - **Wiegekorrektur:** Gesamtgewicht eingeben; die App zieht das bekannte Leerspulengewicht ab und setzt den Restbestand. Auch unbekannte Bestände können so erfasst werden.
 - **Katalogvorlagen:** Optionale SpoolmanDB-Suche für neue Produkte. Vorlagen prüfen und übernehmen; keine automatische Änderung bestehender Produkte oder Slicer-Profile.
@@ -86,7 +86,7 @@ Nach FINISH werden die Grammwerte der ausgewählten Platte gebucht. Bei Abbruch 
 
 ## Validierung und bekannte Grenzen
 
-Stand 16. November 2026: **161 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
+Stand 16. November 2026: **167 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
 
 Am Referenzsystem wurden Licht, manuelles Schalten und ein tatsächlicher AMS-Farbwechsel im Leerlauf geprüft; ursprüngliche Farbe und Bestandsbindung wurden danach wiederhergestellt. Ein echter Farbwechsel während eines laufenden Drucks nach Modusumstellung sowie ein vollständiger automatischer Abschaltzyklus der neuen Funktion sind noch nicht hardwarebestätigt. Das ist kein Freigabenachweis für andere Modelle oder Firmwarestände.
 

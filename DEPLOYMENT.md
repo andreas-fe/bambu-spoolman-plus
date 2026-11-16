@@ -14,7 +14,7 @@ Nach Deployment `/health`, tatsächlichen Backend-/Simulationsmodus, Inventarsei
 
 ## Automatisierte Prüfung
 
-**161 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
+**167 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
 
 Temporäre Testdaten auf NAS möglichst im Arbeitsspeicher (`--tmpfs /tmp:rw,size=256m`) halten. Das vermeidet langsame SQLite-Schreibtests im Container-Layer. Niemals produktive Datenverzeichnisse in einen Testlauf mounten.
 
@@ -30,6 +30,10 @@ Temporäre Testdaten auf NAS möglichst im Arbeitsspeicher (`--tmpfs /tmp:rw,siz
 | Rundung und Flusszuschlag | Laufende Gewichtsanzeige und verfügbare deaktivierte Option geprüft; Pauschale softwaregetestet, keine gemessene Kalibrierungsmenge. |
 
 Die Nachweise gelten für das Referenzsystem und ersetzen keine Prüfung anderer Firmware-/Modellkombinationen. Health bestätigt Anwendungsbetrieb, nicht die Erreichbarkeit jedes Geräts. Screenshot-Beispieldaten sind kein Hardwaretestnachweis.
+
+### Prüfung der dynamischen Drucksteuerung
+
+Die Profilliste wurde auf dem realen A1 gelesen. Während eines laufenden Drucks wurde auf einem eindeutig inaktiven Schacht dessen bereits bestehendes K-Profil erneut ausgewählt. Neue Befehlsbestätigung und passende Schachtwerte wurden bestätigt; Material, Farbe, K-Wert, Bestände und aktuelle Bindungen blieben unverändert. Das prüft den Schreib-/Bestätigungspfad, nicht den Wechsel auf ein anderes Profil während des Druckens. Neue Kalibrierungen und Bewegungen wurden nicht ausgelöst. Die Auswahl eines anderen Profils und das Lösen auf Standard sind softwaregeprüft; deren tatsächlicher Wechsel bleibt separat am ruhenden Drucker zu prüfen.
 
 ## Weiterführend
 

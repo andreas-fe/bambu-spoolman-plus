@@ -1052,6 +1052,8 @@ def test_ams_write_is_confirmed_and_running_printer_is_blocked(bridge,monkeypatc
     b.ams_state[0].update(known=True,available=True,material='PLA',color='#FFFFFF',seen_at=time.time(),tray_info_idx='profile',nozzle_temp_min=190,nozzle_temp_max=240)
     client=Mock();client.is_connected.return_value=True;client.publish.return_value.rc=0;b.mqtt_client=client
     monkeypatch.setattr(b,'refresh_printer_status',lambda:True)
+    b.printer_status['nozzle_diameter']='0.4'
+    monkeypatch.setattr(b.telemetry,'wait_for_calibration',Mock(return_value=True))
     wait=Mock(return_value=True);monkeypatch.setattr(b.telemetry,'wait_for_ams_write',wait)
     c=b.app.test_client();c.get('/settings')
     with c.session_transaction() as session:token=session['csrf_token']
@@ -1097,6 +1099,8 @@ def ams_test_context(b,monkeypatch):
     client=Mock();client.is_connected.return_value=True;client.publish.return_value.rc=0;b.mqtt_client=client
     monkeypatch.setattr(b,'refresh_printer_status',lambda:True)
     monkeypatch.setattr(b.telemetry,'wait_for_ams_write',Mock(return_value=True))
+    monkeypatch.setattr(b.telemetry,'wait_for_calibration',Mock(return_value=True))
+    b.printer_status['nozzle_diameter']='0.4'
     b.printer_status.update(state='IDLE',state_seen_at=time.time())
     c=b.app.test_client();c.get('/settings')
     with c.session_transaction() as session:csrf=session['csrf_token']
@@ -1299,3 +1303,32 @@ def test_unchanged_ams_report_needs_no_write_lock(bridge):
     with b.store.connection() as writer:
         writer.execute('BEGIN IMMEDIATE')
         b.record_ams_changes()  # Must succeed even while another writer owns the lock.
+
+
+def test_pressure_profile_confirmation_required_before_binding(bridge,monkeypatch):
+    b=bridge;sid,c,csrf,mqtt=ams_test_context(b,monkeypatch)
+    before=b.load_mapping()
+    monkeypatch.setattr(b.telemetry,'wait_for_calibration',Mock(return_value=False))
+    payload=reviewed_payload(c,sid,csrf,mode='write')
+    assert c.post('/devices/ams/filament',data=payload).status_code==504
+    assert b.load_mapping()==before
+    commands=[json.loads(x.args[1]) for x in mqtt.publish.call_args_list]
+    assert any(v.get('print',{}).get('command')=='extrusion_cali_sel' and v['print']['cali_idx']==-1 for v in commands)
+    assert c.post('/devices/ams/filament',data=payload).status_code==409
+
+
+def test_profile_change_invalidates_review_and_custom_index_is_sent(bridge,monkeypatch):
+    import time
+    b=bridge;sid,c,csrf,mqtt=ams_test_context(b,monkeypatch)
+    monkeypatch.setattr(b,'refresh_calibration_profiles',lambda:None)
+    b.printer_status.update(calibration_profiles_seen_at=time.time(),calibration_profiles=[dict(cali_idx=7,k_value=.025,name='Testprofil',filament_id='profile',nozzle_diameter='0.4')])
+    def preview():
+        r=c.get('/api/ams/selection',query_string=dict(slot='0',spool_id=sid,mode='write',calibration='7'))
+        assert r.status_code==200,r.json
+        return dict(slot='0',spool_id=sid,confirm='write',calibration='7',csrf_token=csrf,review_token=r.json['token'])
+    payload=preview();b.printer_status['calibration_profiles'][0]['k_value']=.03
+    assert c.post('/devices/ams/filament',data=payload).status_code==409
+    payload=preview();assert c.post('/devices/ams/filament',data=payload).status_code==200
+    assert b.telemetry.wait_for_calibration.call_args.args[3:]==(7,.03)
+    commands=[json.loads(x.args[1]).get('print',{}) for x in mqtt.publish.call_args_list]
+    assert any(v.get('command')=='extrusion_cali_sel' and v['cali_idx']==7 for v in commands)

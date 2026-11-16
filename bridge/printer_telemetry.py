@@ -2,6 +2,7 @@
 import time
 import threading
 import math
+from .pressure_advance import parse_profiles
 
 
 class AMSCommandRejected(ValueError):
@@ -14,6 +15,8 @@ class PrinterTelemetry:
         self._state_sequence = 0
         self._light_sequence = 0
         self._light_mode = None
+        self._cal_sequences = {i: 0 for i in range(4)}
+        self._profile_reply = None
         self._ams_sequences = {i: 0 for i in range(4)}
         self._ams_revisions = {i: 0 for i in range(4)}
         self._ams_signatures = {i: None for i in range(4)}
@@ -26,7 +29,7 @@ class PrinterTelemetry:
         self.status.update(target_slot=None,target_slot_known=False)
 
     def update(self, payload, color_normalizer):
-        if payload.get('command')=='ams_filament_setting' and payload.get('sequence_id') is not None:
+        if payload.get('command') in ('ams_filament_setting','extrusion_cali_sel') and payload.get('sequence_id') is not None:
             code=payload.get('err_code',0)
             try:code=int(str(code),0) if isinstance(code,str) else int(code)
             except (ValueError,TypeError):code=-1
@@ -41,6 +44,14 @@ class PrinterTelemetry:
                 while len(self._ams_commands)>32:
                     old=next(iter(self._ams_commands));self._ams_commands.pop(old);self._ams_command_times.pop(old,None)
                 self._state_changed.notify_all()
+        if 'nozzle_diameter' in payload:
+            self.status['nozzle_diameter'] = str(payload['nozzle_diameter'])
+        if payload.get('command') == 'extrusion_cali_get':
+            with self._state_changed:
+                if isinstance(payload.get('filaments'),list) and str(payload.get('result','success')).lower()=='success':
+                    self.status.update(calibration_profiles=parse_profiles(payload),calibration_profiles_seen_at=time.time())
+                    self._profile_reply = str(payload.get('sequence_id'))
+                    self._state_changed.notify_all()
         lights = payload.get('lights_report')
         for light in lights if isinstance(lights, list) else []:
             if isinstance(light, dict) and light.get('node') == 'chamber_light' and light.get('mode') in ('on', 'off'):
@@ -65,6 +76,14 @@ class PrinterTelemetry:
                 if tid not in self.ams:
                     continue
                 current = self.ams[tid]
+                if any(k in tray for k in ('cali_idx','k','n')):
+                    with self._state_changed:
+                        for key in ('cali_idx','k','n'):
+                            if key in tray: current[key] = tray[key]
+                        if 'cali_idx' in tray:
+                            self._cal_sequences[tid] += 1
+                            current['calibration_seen_at'] = time.time()
+                        self._state_changed.notify_all()
                 for key in ('tray_info_idx', 'nozzle_temp_min', 'nozzle_temp_max'):
                     if key in tray:
                         current[key] = tray[key]
@@ -185,6 +204,29 @@ class PrinterTelemetry:
                     return True
                 if now>=deadline:return False
                 self._state_changed.wait(min(.25,deadline-now))
+
+    def wait_for_profiles(self, sequence, timeout=6):
+        with self._state_changed:
+            return self._state_changed.wait_for(lambda: self._profile_reply == str(sequence), timeout)
+
+    def calibration_sequence(self, slot):
+        with self._state_changed:
+            return self._cal_sequences[slot]
+
+    def wait_for_calibration(self, slot, after, sequence, index, k=None, timeout=8):
+        deadline=time.monotonic()+timeout
+        with self._state_changed:
+            while True:
+                if sequence in self._ams_commands and self._ams_commands[sequence]:
+                    raise AMSCommandRejected(self._ams_commands[sequence])
+                tray=self.ams[slot]
+                try:
+                    match=int(tray.get('cali_idx',-999))==index and (k is None or abs(float(tray.get('k',float('nan')))-k)<0.00005)
+                except (TypeError,ValueError):match=False
+                if sequence in self._ams_commands and self._cal_sequences[slot]>after and match:return True
+                left=deadline-time.monotonic()
+                if left<=0:return False
+                self._state_changed.wait(min(left,.25))
 
     def wait_for_state(self, after_sequence, timeout=6):
         """Light/AMS-only deltas must never validate an old idle state."""

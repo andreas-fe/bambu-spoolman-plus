@@ -24,7 +24,7 @@ Der lokale Druckerzugriff benötigt private Zugangsdaten. Die Drucker-TLS-Verbin
 |---|---|
 | `bridge.py` | MQTT-Ereignisse, Aufträge, Planung, Buchungsworker, Webrouten und Vorschauprüfung |
 | `printer_telemetry.py` | Deltaerhaltung, Aktualität, Licht- und AMS-Bestätigung einschließlich Ablehnungen |
-| `ams_control.py`, `ams_selection.py` | Schachtschutz, bekannte Profile, Material-/Farbvergleich, Änderungsfingerabdruck |
+| `ams_control.py`, `ams_selection.py`, `pressure_advance.py` | Schachtschutz, bekannte Profile, Material-/Farbvergleich, Änderungsfingerabdruck |
 | `ams_ui.py`, `device_visuals.py`, `ui.py` | Geprüfter Rollenablauf, eigene SVG-Gerätegrafiken und gemeinsame Oberfläche |
 | `inventory_db.py`, `inventory_service.py` | Additives Schema, atomare Bestandsbewegungen und referenzgeschütztes Entfernen |
 | `inventory_api.py`, `inventory_ui.py` | Produkt-/Rollenpflege, Korrekturen und verständliche Darstellung |
@@ -50,7 +50,7 @@ flowchart TD
     Check --> Same{"Druckerangaben passen bereits?"}
     Same -->|Ja| Bind["Nur diesen Schacht im Bestand binden"]
     Same -->|Nein| Send["Einmaliger MQTT-Befehl mit QoS 0 und begrenzter Sequenz"]
-    Send --> Reply{"Befehl akzeptiert und neue passende Meldungen stabil?"}
+    Send --> Reply{"Material/Farbe und Drucksteuerung akzeptiert und neu bestätigt?"}
     Reply -->|Ja| Bind
     Reply -->|Nein oder unklar| Stop["Fehler anzeigen; keine automatische Wiederholung"]
 ```
@@ -106,3 +106,10 @@ SQLite-Backup-API für eine konsistente laufende Kopie verwenden; laufende Haupt
 Native JSON-Exporte erhalten Inventarhistorie und relevante Auftragsprüfvermerke, aktivieren aber keine automatische Abschaltung beim Restore. Vollständige SQLite-Sicherungen enthalten auch Laufzeitzustände. Vor Freigabe nach Wiederherstellung offene Aufträge, Betriebsmodus und Abschaltoption prüfen.
 
 [Hardwarestand und Tests](../DEPLOYMENT.md) · [Kommunikationsdiagramm](flows/communication.md) · [Verarbeitungsdiagramm](flows/processing.md).
+
+
+## Dynamische Drucksteuerung
+
+`extrusion_cali_get` liefert die gespeicherten Profile zur gemeldeten Düse. Die App erfindet weder Index noch K-Wert. `extrusion_cali_sel` wählt einen vorhandenen Index im exakten Filamentvorlagen-/Düsenkontext; Index -1 bezeichnet keine gespeicherte Profilauswahl. Für einen anderen bekannten Vorlagenkontext werden ausschließlich aktuelle bereits vom Drucker bekannte Material-/Temperaturangaben verwendet. Gespeicherte Profilauswahlen werden vor Vorschau und Übertragung frisch gelesen; Name, K-Wert, Index und Kontext sind Bestandteil des Vorschau-Fingerabdrucks.
+
+Nach bestätigtem `ams_filament_setting` wird der Schachtschutz erneut geprüft, bevor `extrusion_cali_sel` gesendet wird. Die App verlangt dessen Befehlsantwort und einen neuen Schachtbericht mit passendem `cali_idx`, bei gespeichertem Profil auch passendem K-Wert. Alte passende Werte genügen nicht. Ein Teilergebnis verändert möglicherweise Drucker-Metadaten, wird aber nicht als vollständiger Erfolg oder als neue Bestandsbindung ausgegeben. Es wird kein Rücksetz-/Wiederholungsbefehl automatisch geraten.

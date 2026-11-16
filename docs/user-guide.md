@@ -56,13 +56,28 @@ Die A1-Abbildung ist eine eigene schematische Darstellung. Eine gesunde Anwendun
 1. Physische Rolle im gewünschten Schacht wechseln.
 2. Den Schacht in der Grafik oder über Slot 1–4 auswählen. Die Grafik ordnet 1/4 oben und 2/3 unten an; die externe Spule steht daneben.
 3. Im Auswahlfeld die **konkrete Bestandsrolle** auswählen. Gleiche Produkte können mehrere unabhängige Rollen besitzen.
-4. „Rolle übernehmen …“ öffnen. Die Auswahl allein sendet noch keinen Befehl.
+4. Rechts die gewünschte Drucksteuerung wählen: Standard oder ein vorhandenes passendes Profil. Dann „← An Drucker senden …“ öffnen. Die Auswahl allein sendet noch keinen Befehl.
 5. Unter „Änderung prüfen“ bisherige und geplante Farbe, Materialfamilie, Rolle und gegebenenfalls bekanntes Druckerprofil prüfen.
-6. Bestätigen. Stimmen Materialfamilie und Farbe bereits, wird nur die Bestandszuordnung gespeichert. Andernfalls setzt die App die Druckerangaben und ordnet erst nach bestätigter, stabiler Rückmeldung die Rolle zu.
+6. Die geprüfte Übertragung bestätigen. Der Transfer übernimmt Material, Farbe und diese Profilauswahl; die Bestandsrolle wird erst nach Bestätigung beider Druckerbefehle gebunden. Für eine reine Bestandsbindung stattdessen „Automapping →“ beziehungsweise „Auswahl nur im Bestand zuordnen …“ nutzen.
 
 Die App ist damit der primäre Weg für den Rollenwechsel. Die Grafik zeigt bestätigte Druckerwerte, keine ungespeicherten Entwürfe. Der Auswahlrahmen bezeichnet den geöffneten Schacht; der farbige Filamentweg bezeichnet den gemeldeten aktiven Schacht. Auswahl und tatsächliche Nutzung sind unabhängig.
 
 Schreibbefehle verwenden ein aktuelles, vom Drucker bereits bekanntes Profil derselben Materialfamilie einschließlich gültiger Temperaturangaben. Profilkennungen und Temperaturen werden nicht geraten. Ohne geeignetes Profil den Materialtyp zunächst über Bambu Studio bereitstellen. Eine Metadatenänderung lädt oder entlädt kein Filament und verändert keine Slicer-Druckprofile.
+
+### Dynamische Drucksteuerung / K-Profil
+
+Der Unterbereich zeigt links die **AMS-Werte einschließlich gemeldeter Drucksteuerung und K-Faktor**, rechts die Bestandsrolle und die gewünschte Drucksteuerung. In der Mitte stehen die Übertragungsrichtungen. Auf kleinen Bildschirmen folgt auf die Druckerkarte zuerst die Rollenauswahl und dann die Aktionsgruppe.
+
+Der Material-/Farbbefehl allein ersetzt keine dynamische Drucksteuerung. Beim Wechsel der Bestandsspule wird deshalb auf der rechten Seite nicht unbemerkt das vorherige Profil übernommen. Die gewünschte Auswahl ist bewusst zu treffen:
+
+- **Standard · kein gespeichertes Profil:** Löst die Zuordnung zu einem gespeicherten K-Profil über die Druckerfunktion. Es wird kein K-Wert erfunden oder auf null geschrieben; der vom Drucker gemeldete effektive K-Wert kann weiterhin angezeigt werden.
+- **Vorhandenes Druckerprofil:** Über „Profile vom Drucker laden“ werden Namen, K-Werte und Düsendurchmesser abgefragt. Nur passende Materialvorlagen mit bekanntem aktuellem Druckerkontext können übertragen werden. Ein bloß ähnlicher Name oder dieselbe Farbe genügt nicht.
+
+Die Profilliste wird vor Vorschau und Bestätigung einer gespeicherten Auswahl neu geprüft. Geänderte oder neu nummerierte Einträge machen die Vorschau ungültig. Die App erstellt, löscht oder kalibriert keine Profile und ändert keinen Flussfaktor im Slicer. Der Drucker muss ein geeignetes Profil bereits besitzen; bei fehlender Materialvorlage diese zunächst in Bambu Studio bereitstellen.
+
+Beim Transfer folgen zwei getrennte Befehle: Material/Farbe und Auswahl der dynamischen Drucksteuerung. Erfolg erfordert für beide eine Befehlsbestätigung und neue passende Schachtwerte, bei einem gespeicherten Profil zusätzlich den erwarteten K-Wert. Erst dann wird die Rolle im Bestand gebunden. Falls nur Material/Farbe bestätigt wurde, zeigt die App ausdrücklich den Teilerfolg an und fordert eine Zustandsprüfung; keine automatische Wiederholung. Der aktive und der angeforderte Schacht bleiben für beide Befehle geschützt.
+
+Die dynamische Drucksteuerung ist unabhängig vom pauschalen 2-g-Verbrauchszuschlag unter Einstellungen. Die Auswahl startet keinen Kalibrierungsdruck. Technische Referenz: [Bambu Studio – DeviceManager.cpp](https://github.com/bambulab/BambuStudio/blob/master/src/slic3r/GUI/DeviceManager.cpp) (`command_get_pa_calibration_tab`, `commnad_select_pa_calibration`).
 
 ### Bestätigung, Zeitbedarf und Sicherheit
 
@@ -80,7 +95,7 @@ Die Schachtfreigabe während eines Drucks ist durch automatisierte und Browserpr
 
 ### Fallback für Änderungen in Bambu Studio oder am Drucker
 
-Unter „Abgleich mit Bambu Studio / Drucker“ lässt sich die Auswahl auf bereits passende Material-/Farbkombinationen einschränken. Standardmäßig stehen alle aktiven Bestandsrollen zur Verfügung. „Nur Bestand zuordnen …“ verbindet eine Rolle mit dem vorhandenen Druckerstand. Eine bewusste Abweichung muss zusätzlich bestätigt werden. „Zuordnung lösen …“ betrifft nur den ausgewählten Schacht. Die externe Spule wird hier ausschließlich im Bestand zugeordnet.
+Der Filter „Nur zum Drucker passende Rollen anzeigen“ ist dauerhaft unter der Rollenauswahl sichtbar. Standardmäßig stehen alle aktiven Bestandsrollen zur Verfügung. „Automapping →“ sucht anhand der gemeldeten Materialfamilie und exakten Farbe: Bei genau einem Treffer wird eine reine Bestandszuordnung zur Bestätigung vorbereitet; bei mehreren Treffern muss die tatsächliche Rolle ausgewählt werden. „Auswahl nur im Bestand zuordnen …“ verbindet die gewählte Rolle mit dem vorhandenen Druckerstand. Eine bewusste Abweichung muss zusätzlich bestätigt werden. „Zuordnung lösen …“ betrifft nur den ausgewählten Schacht. Die externe Spule wird hier ausschließlich im Bestand zugeordnet.
 
 Ein gemeldeter Wechsel von Material, Farbe oder Belegung kann eine alte Zuordnung für künftige Aufträge lösen. Identische Rollen mit identischen Druckerangaben lassen sich ohne gemeldete Leerphase nicht unterscheiden; diesen Wechsel ausdrücklich selbst zuordnen.
 

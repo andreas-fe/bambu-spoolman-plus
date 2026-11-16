@@ -27,7 +27,7 @@ def slot_write_reason(printer, slot, connected, now=None):
     return 'Drucker bereitet einen Wechsel vor oder sein Zustand ist ungeklärt. Bitte kurz warten.'
 
 
-def filament_payload(slot, spool, trays):
+def filament_payload(slot, spool, trays, profile_id=None):
     if slot not in range(4):
         raise ValueError('Ungültiger AMS-Schacht.')
     material = material_family(spool.get('material'))
@@ -42,6 +42,8 @@ def filament_payload(slot, spool, trays):
             low,high = int(tray['nozzle_temp_min']),int(tray['nozzle_temp_max'])
             profile = str(tray['tray_info_idx'])
         except (KeyError,ValueError,TypeError):
+            continue
+        if profile_id and profile != profile_id:
             continue
         if not profile or not 100 <= low <= high <= 350:
             continue

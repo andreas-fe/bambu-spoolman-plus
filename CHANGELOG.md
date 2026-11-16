@@ -1,5 +1,13 @@
 # Änderungen
 
+## 2026-11-16 — Dynamische Drucksteuerung und gerichteter AMS-Abgleich
+
+- Neuer AMS-Unterbereich: Drucker mit Farbe, Material, Profil und K-Faktor links; Bestandsspule und gewünschte Drucksteuerung rechts; explizite Übertragungsrichtungen in der Mitte. Mobil steht die Auswahl vor der Aktion. Der Filter für passende Rollen ist dauerhaft sichtbar.
+- „← An Drucker senden“ übernimmt Material, Farbe und eine bewusst gewählte dynamische Drucksteuerung. Standard löst das gespeicherte Profil, alternativ werden vorhandene Druckerprofile mit Namen, K-Faktor und passender Düse angeboten. Kein automatisches Erben des alten Rollenprofils, keine geratenen K-Werte und keine automatische Kalibrierung.
+- Druckerprofile werden gelesen und vor gespeicherter Profilauswahl erneut validiert. Materialvorlage, Düse und Inhalt gehören zur bestätigten Vorschau. Zwei getrennte Befehle mit separater Rückbestätigung; neue Bestandsbindung erst nach vollständigem Erfolg. Teilfehler werden ausdrücklich angezeigt und nicht automatisch wiederholt.
+- „Automapping →“ bereitet ausschließlich die Bestandszuordnung vor. Eindeutige Treffer verlangen Bestätigung; mehrere passende Rollen werden zur Auswahl angezeigt, ohne automatisch eine physische Rollenidentität zu behaupten.
+- Aktive und angeforderte Schächte bleiben geschützt. Weitere Regressionstests für Profilkontext, veraltete Listen, neue Schachtmeldungen, Ablehnungen und Teilfehler; 167 Tests lokal und im NAS-Container bestanden; Browserprüfung für Richtungen, Profile, Mehrdeutigkeit und mobile Ansicht. Hardware: Profilliste gelesen und vorhandenes Profil auf inaktivem Schacht während Druck frisch bestätigt; kein Wechsel auf ein anderes Profil, keine Bewegung und keine Bestandsänderung.
+
 ## 2026-11-16 — Nachträgliche Auftragszuordnung und Datenbanksperren
 
 - Eine bestätigte Auftragszuordnung ergänzt nun auch ursprünglich fehlende Schacht→Bestandsrollen im Auftragssnapshot. Bereits erfasste Rollen bleiben erhalten; ergänzt werden ausschließlich ausdrücklich gewählte Schächte. Neue Rollen werden bei Bedarf in den Bestandssnapshot aufgenommen.

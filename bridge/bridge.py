@@ -19,6 +19,7 @@ from bridge.ams_ui import AMS_PANEL
 from bridge.device_visuals import A1_VISUAL
 from bridge.materials import materials_match, material_family, MATERIAL_FAMILY_PATTERN
 from bridge.ams_control import filament_payload, slot_write_reason
+from bridge.pressure_advance import calibration_choice
 from bridge.ams_selection import selection_fingerprint, spool_matches
 from bridge.auto_power import AutoPowerOff
 from itsdangerous import URLSafeTimedSerializer, BadSignature
@@ -1231,7 +1232,12 @@ def ams_review(slot, spool_id):
     elif not tray.get('known') or not tray.get('available'):
         error = 'Im Schacht ist noch kein Filament bestätigt. Bitte Rolle einlegen und Status aktualisieren.'
     else:
-        try: payload = filament_payload(int(slot),spool,ams_state)
+        try:
+            chosen=request.values.get('calibration','-1')
+            known_profile=next((p for p in printer_status.get('calibration_profiles',[]) if str(p['cali_idx'])==chosen),None)
+            payload = filament_payload(int(slot),spool,ams_state,known_profile['filament_id'] if known_profile else None)
+            if request.values.get('mode')=='write' or request.form.get('confirm')=='write':
+                payload['calibration'] = calibration_choice(request.values.get('calibration','-1'),printer_status,payload)
         except ValueError as exc: error = str(exc)
     policy = slot_write_reason(printer_status,int(slot),bool(mqtt_client and mqtt_client.is_connected())) if slot!='external' else None
     reason = error or policy
@@ -1332,6 +1338,26 @@ def ams_result(message):
     return jsonify(message=message,ams=ams_state,mapping=load_mapping(),printer=printer_status)
 
 
+def refresh_calibration_profiles():
+    nozzle=str(printer_status.get('nozzle_diameter') or '')
+    if nozzle not in ('0.2','0.4','0.6','0.8'):raise AMSSelectionChanged('Düsendurchmesser noch unbekannt.')
+    sequence=next_sequence();client=mqtt_client
+    if not client or not client.is_connected():raise AMSSelectionChanged('Drucker nicht verbunden.')
+    payload=dict(command='extrusion_cali_get',sequence_id=sequence,filament_id='',nozzle_diameter=nozzle)
+    if client.publish(f'device/{SERIAL}/request',json.dumps({'print':payload}),qos=0).rc!=mqtt.MQTT_ERR_SUCCESS or not telemetry.wait_for_profiles(sequence):
+        raise AMSSelectionChanged('Keine aktuelle Profilliste erhalten. Später erneut laden.')
+
+
+@app.get('/api/ams/calibrations')
+def ams_calibrations():
+    try:
+        if not refresh_printer_status():raise AMSSelectionChanged('Druckerstatus nicht erreichbar.')
+        refresh_calibration_profiles()
+        return jsonify(profiles=printer_status.get('calibration_profiles',[]),nozzle_diameter=printer_status['nozzle_diameter'])
+    except AMSSelectionChanged as exc:
+        return jsonify(error=str(exc)),409
+
+
 @app.get('/api/ams/selection')
 def ams_selection_preview():
     if INVENTORY_BACKEND!='internal':
@@ -1342,6 +1368,7 @@ def ams_selection_preview():
             raise ValueError('Ungültige Aktion.')
         if mode=='write':
             refresh_printer_status()
+            if request.args.get('calibration','-1')!='-1':refresh_calibration_profiles()
         review=ams_review(slot,spool_id)
         if mode=='write' and not review['write_allowed']:
             raise AMSSelectionChanged(review['write_reason'])
@@ -1355,7 +1382,8 @@ def ams_selection_preview():
         return jsonify(review_required=needs_review,token=ams_signer().dumps(signed),expires_in=120,matches=review['matches'],
                        write_allowed=review['write_allowed'],write_reason=review['write_reason'],
                        spool=review['spool'],tray=review['tray'],printer=printer_status,
-                       profile=dict(material=profile['tray_type'],min=profile['nozzle_temp_min'],max=profile['nozzle_temp_max']) if profile else None)
+                       profile=dict(material=profile['tray_type'],min=profile['nozzle_temp_min'],max=profile['nozzle_temp_max']) if profile else None,
+                       calibration=profile.get('calibration') if profile else None)
     except AMSSelectionChanged as exc:
         return jsonify(error=str(exc)),409
     except (ValueError,KeyError) as exc:
@@ -1392,14 +1420,17 @@ def write_ams_filament():
         return jsonify(error='Bitte die Übertragung an den Drucker ausdrücklich bestätigen.'),400
     if not ams_write_lock.acquire(blocking=False):
         return jsonify(error='Eine AMS-Änderung läuft bereits. Bitte kurz warten.'),409
+    metadata_confirmed=False
     try:
         slot=str(int(request.form['slot']));spool_id=request.form['spool_id']
         if not refresh_printer_status():
             return jsonify(error='Aktueller Druckerstatus fehlt. Bitte Status aktualisieren.'),409
         policy=slot_write_reason(printer_status,int(slot),bool(mqtt_client and mqtt_client.is_connected()))
         if policy: return jsonify(error=policy),409
+        if request.form.get('calibration','-1')!='-1':refresh_calibration_profiles()
         review,signed=ams_validate_review(slot,spool_id,'write')
         payload=dict(review['payload'])
+        calibration=payload.pop('calibration')
         policy=slot_write_reason(printer_status,int(slot),bool(mqtt_client and mqtt_client.is_connected()))
         if policy: raise AMSSelectionChanged(policy)
         ams_consume_review(signed)
@@ -1415,14 +1446,25 @@ def write_ams_filament():
         send_pushall(client)
         if not telemetry.wait_for_ams_write(int(slot),sequence,payload['sequence_id'],payload['tray_type'],'#'+payload['tray_color'][:6],timeout=25):
             return jsonify(error='Keine passende neue Druckerbestätigung. Ergebnis unklar: Bitte den Status prüfen und vor einem neuen Versuch erneut bestätigen.'),504
+        metadata_confirmed=True
+        # Metadata and PA selection are two commands, with separate confirmations.
+        policy=slot_write_reason(printer_status,int(slot),bool(client and client.is_connected()))
+        if policy: raise AMSSelectionChanged(policy)
+        command=dict(calibration['payload']); command['sequence_id']=next_sequence()
+        cal_sequence=telemetry.calibration_sequence(int(slot))
+        if client.publish(f'device/{SERIAL}/request',json.dumps({'print':command}),qos=0).rc!=mqtt.MQTT_ERR_SUCCESS:
+            return jsonify(error='Material/Farbe möglicherweise geändert, Drucksteuerung nicht bestätigt. Bitte Zustand prüfen; Bestandsrolle wurde nicht übernommen.'),503
+        send_pushall(client)
+        if not telemetry.wait_for_calibration(int(slot),cal_sequence,command['sequence_id'],command['cali_idx'],calibration['k_value']):
+            return jsonify(error='Material/Farbe bestätigt, Drucksteuerung jedoch nicht bestätigt. Bitte am Drucker prüfen. Keine automatische Wiederholung und keine neue Bestandsbindung.'),504
         record_ams_changes()
         ams_assign_one(slot,review['spool'],review['fingerprint']['previous'],after_write=True)
         log(f'AMS Slot {int(slot)+1}: Material/Farbe bestätigt und Bestandsspule zugeordnet.')
-        return ams_result('Drucker bestätigt. Material, Farbe und Bestandsspule übernommen.')
+        return ams_result('Drucker bestätigt. Material, Farbe, Drucksteuerung und Bestandsspule übernommen.')
     except AMSCommandRejected as exc:
-        return jsonify(error=str(exc)),422
+        return jsonify(error=('Material/Farbe bereits übertragen; Drucksteuerung nicht bestätigt. Keine neue Bestandszuordnung. ' if metadata_confirmed else '')+str(exc)),422
     except AMSSelectionChanged as exc:
-        return jsonify(error=str(exc)),409
+        return jsonify(error=('Material/Farbe bereits übertragen; bitte Drucksteuerung und Bestandszuordnung prüfen. ' if metadata_confirmed else '')+str(exc)),409
     except (ValueError,KeyError) as exc:
         return jsonify(error=str(exc)),400
     except Exception:

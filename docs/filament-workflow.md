@@ -12,13 +12,13 @@ Produkt anlegen oder Katalogvorlage übernehmen, Hersteller bei Bedarf im selben
 
 ## Normaler AMS-Wechsel
 
-**Voraussetzung für das Setzen von Farbe und Material: LAN-only und Entwicklermodus.** Rolle physisch wechseln, Schacht in der Grafik auswählen, Bestandsrolle wählen, „Rolle übernehmen …“ öffnen, Vorschau prüfen und bestätigen. Die App setzt bei Bedarf Druckerangaben und bindet die Rolle nach stabiler neuer Bestätigung. Bei bereits passenden Druckerangaben genügt eine reine Bestandsbindung.
+**Voraussetzung für das Setzen von Farbe und Material: LAN-only und Entwicklermodus.** Rolle physisch wechseln, Schacht in der Grafik auswählen, Bestandsrolle wählen, Die gewünschte Drucksteuerung rechts wählen, „← An Drucker senden …“ öffnen, Vorschau prüfen und bestätigen. Die App setzt bei Bedarf Druckerangaben und bindet die Rolle nach stabiler neuer Bestätigung. Für eine reine Bestandsbindung „Automapping →“ oder „Auswahl nur im Bestand zuordnen …“ nutzen. Der Filter für passende Rollen bleibt dauerhaft sichtbar.
 
 Aktiver und angeforderter Schacht bleiben während eines Drucks gesperrt; andere eindeutige Schächte dürfen geändert werden. Für den aktuellen Auftrag relevante Änderungen lösen eine Zuordnungsprüfung vor dessen späterer Buchung aus. Keine automatische Mengenmessung bei einem physischen Rollenwechsel.
 
 ## Fallback nach Änderungen außerhalb der App
 
-Bei Änderungen in Bambu Studio oder direkt am Drucker aktuelle Rolle in der App neu zuordnen. Der Bereich „Abgleich mit Bambu Studio / Drucker“ kann auf passende Material-/Farbkombinationen filtern. Eine bewusste Abweichung für eine reine Bestandsbindung muss ausdrücklich bestätigt werden. Unterschiedliche Farben fallen im visuellen Vergleich auf. Identische Rollen bleiben allein anhand der Farbe ununterscheidbar.
+Bei Änderungen in Bambu Studio oder direkt am Drucker aktuelle Rolle in der App neu zuordnen. Der dauerhaft sichtbare Filter kann auf passende Material-/Farbkombinationen einschränken; „Automapping →“ bereitet eine reine Bestandsbindung vor. Eine bewusste Abweichung für eine reine Bestandsbindung muss ausdrücklich bestätigt werden. Unterschiedliche Farben fallen im visuellen Vergleich auf. Identische Rollen bleiben allein anhand der Farbe ununterscheidbar.
 
 ## Slicer-Projekt vor dem Start
 
