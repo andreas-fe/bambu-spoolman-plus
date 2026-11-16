@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-16 — Eigener Reiter Druckerspeicher
+
+- Lokale FTPS-Dateiverwaltung für Hauptverzeichnis, Druckcache und Modelle: Suche, Größe, Datum, Sortierung und explizite Mehrfachauswahl für reguläre Druckdateien.
+- Bedarfsgesteuerte Vorschau aus eingebetteten Bambu-Plattenbildern beziehungsweise Thumbnails; begrenzte Archive/Bilder und Laufzeiten. Kein interaktives 3D-Rendering und keine automatischen Massendownloads.
+- Signierte Dateiauswahl, erneute Prüfung von Größe/Datum, Schutz laufender/offener Aufträge und explizite Löschbestätigung. Löschung nur bei bestätigtem Leerlauf, keine automatische Bereinigung und kein Zugriff auf beliebige Systempfade. Teilfehler werden mit bereits bestätigten Löschungen angezeigt; keine automatische Wiederholung.
+- 177 Tests lokal und im NAS-Container bestanden; Browserprüfung mit künstlichen Dateien. Journal und Bestände werden durch Speicheraktionen nicht verändert. Produktive Dateien wurden nicht zu Testzwecken gelöscht.
+
 ## 2026-11-16 — AMS-Lite-Grafik näher am Original
 
 - Schlankere, höhere Spulen mit ausgeprägten grauen Flanschen, direkter Materialbeschriftung und Bearbeiten-Symbol. Kürzere Arme rücken die Rollen deutlich näher an den zentralen Ständer.

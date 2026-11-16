@@ -14,7 +14,7 @@ Nach Deployment `/health`, tatsächlichen Backend-/Simulationsmodus, Inventarsei
 
 ## Automatisierte Prüfung
 
-**174 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
+**177 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
 
 Temporäre Testdaten auf NAS möglichst im Arbeitsspeicher (`--tmpfs /tmp:rw,size=256m`) halten. Das vermeidet langsame SQLite-Schreibtests im Container-Layer. Niemals produktive Datenverzeichnisse in einen Testlauf mounten.
 
@@ -41,3 +41,9 @@ Die Profilliste wurde auf dem realen A1 gelesen. Während eines laufenden Drucks
 - [Backup, Testimport, Migration und Rollback](docs/plus-operations.md)
 - [Architektur und Grenzen](docs/architecture.md)
 - [Changelog](CHANGELOG.md)
+
+## Druckerspeicher
+
+FTPS-Dateiliste, Pfadgrenzen, Auswahlprüfung, Bestätigung und Löschsperren sind automatisiert geprüft. Vorschau nutzt gespeicherte Bilder aus begrenzten 3MF-Archiven. Die Löschbefehle sind mit einem simulierten Server getestet; produktive Dateien wurden für die Prüfung nicht gelöscht. Eine echte Löschprüfung ist separat mit einer ausdrücklich ausgewählten entbehrlichen Datei vorzunehmen.
+
+Am Referenz-A1 wurden Hauptverzeichnis und Druckcache erfolgreich gelesen; ein kleines eingebettetes PNG-Vorschaubild aus einer vorhandenen 3MF wurde verifiziert. `/model` ist dort nicht verfügbar. Es wurden keine echten Dateien gelöscht oder hochgeladen.

@@ -5,6 +5,7 @@ from markupsafe import Markup
 NAVIGATION = (
     ('overview', '/', 'Übersicht', 'Drucker & Verbrauch'),
     ('inventory', '/inventory', 'Filamente', 'Spulen & Produkte'),
+    ('storage', '/storage', 'Druckerspeicher', 'Dateien & Vorschau'),
     ('camera', '/camera', 'Kamera', 'Livebild & Licht'),
     ('devices', '/devices', 'Steckdose', 'Leistung & Energie'),
     ('settings', '/settings', 'Einstellungen', 'Betrieb & Zuordnung'),

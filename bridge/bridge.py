@@ -1220,6 +1220,47 @@ def refresh_printer_status():
     return telemetry.wait_for_state(sequence, timeout=6)
 
 
+from bridge.printer_storage import register_storage
+
+def storage_ftp():
+    ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT);ctx.check_hostname=False;ctx.verify_mode=ssl.CERT_NONE
+    ftp=ImplicitFTP_TLS(context=ctx)
+    try:
+        ftp.connect(PRINTER_IP,990,timeout=12);ftp.login('bblp',ACCESS_CODE);ftp.prot_p();ftp.set_pasv(True)
+        return ftp
+    except Exception:
+        ftp.close();raise
+
+
+def storage_name(value):
+    from urllib.parse import unquote
+    name=unquote(str(value or '')).replace('\\','/').split('?')[0].rsplit('/',1)[-1].casefold()
+    for suffix in ('.gcode.3mf','.3mf','.gcode'):
+        if name.endswith(suffix):return name[:-len(suffix)]
+    return name
+
+
+def storage_blocked(name):
+    target=storage_name(name)
+    with store.connection() as db:
+        jobs=db.execute("SELECT filename,subtask_name FROM jobs WHERE kind='PRINT' AND state IN ('RUNNING','PREPARING','FINISH_PENDING','CANCEL_PENDING','WAITING_METADATA','WAITING_MAPPING','BOOKING','RETRY','UNKNOWN')").fetchall()
+    if any(target and target in (storage_name(j['filename']),storage_name(j['subtask_name'])) for j in jobs):
+        return 'Geschützt: laufender oder noch offener Druckauftrag.'
+    if printer_status.get('state') in ('RUNNING','PREPARE','PAUSE') and target==storage_name(printer_status.get('subtask_name')):
+        return 'Geschützt: aktuelle Druckdatei.'
+    return None
+
+
+def storage_idle():
+    from bridge.devices import safe_to_power_off
+    if not refresh_printer_status() or not safe_to_power_off(printer_status):return False
+    with store.connection() as db:
+        return not db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING')").fetchone()
+
+
+printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log)
+
+
 register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,
                  shutdown_job_guard=lambda job_id:auto_power.permitted(job_id))
 

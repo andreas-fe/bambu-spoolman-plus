@@ -11,6 +11,7 @@ Bambu-Spoolman-Plus verbindet lokale Druckerüberwachung, AMS-Zuordnung, Filamen
 - [Wiegen und Bestandskorrektur](#wiegen-und-bestandskorrektur)
 - [Löschen und Archivieren](#löschen-und-archivieren)
 - [Journal und offene Druckaufträge](#journal-und-offene-druckaufträge)
+- [Druckerspeicher](#druckerspeicher)
 - [Kamera und Licht](#kamera-und-licht)
 - [Steckdose und Energie](#steckdose-und-energie)
 - [Automatisch nach dem Druck ausschalten](#automatisch-nach-dem-druck-ausschalten)
@@ -187,6 +188,19 @@ Bei einem beendeten Auftrag in WAITING_METADATA ohne gespeicherte Mengen erschei
 Die Checkbox ausdrücklich bestätigen und „Auftrag ohne Buchung schließen“ wählen. Der Auftrag verschwindet aus den offenen Aufgaben und wird nicht automatisch erneut abgerechnet. Im Journal bleibt eine Position **„Ohne Buchung geschlossen“** mit Menge „—“ erhalten. Das ist keine Nullverbrauchsmessung: Tatsächlich verbrauchtes Material ist damit nicht erfasst und kann bei Bedarf über eine Bestands-/Wiegekorrektur berücksichtigt werden.
 
 Laufende Aufträge, ein gerade verarbeiteter Auftrag, vorhandene Mengen oder bereits angelegte Buchungspositionen bleiben geschützt. Es werden keine historischen Daten gelöscht und keine Gerätebefehle ausgelöst. Eine für diesen Auftrag aktivierte Abschaltautomatik führt dadurch nicht zum Ausschalten.
+
+## Druckerspeicher
+
+![Dateiliste mit künstlichen Beispieldateien](assets/current/storage.png)
+
+Der eigene Reiter liest Druckdateien direkt über FTPS vom Drucker. Die Bereiche Hauptverzeichnis, Druckcache und Modelle werden einzeln abgefragt; nicht vorhandene oder nicht erreichbare Bereiche zeigen einen Fehler statt einer scheinbar leeren Speicherkarte. Unterstützt werden reguläre `.3mf`- und `.gcode`-Dateien. Verzeichnisse, Links und Systemdateien werden nicht zum Löschen angeboten.
+
+- Suche nach Dateiname; Sortierung nach Name, Größe oder der Drucker-Datumsangabe. Die FTP-Angabe kann ohne Jahr sein; die Datumssortierung verwendet in diesem Fall eine Jahresannahme. Es wird keine exakte Aufnahmezeit behauptet.
+- „Vorschau laden“ liest bei bestätigtem Leerlauf einzeln ein gespeichertes PNG-/JPEG-Modellbild aus dem Druckarchiv. Übliche Bambu-Plattenbilder werden berücksichtigt. Das ist keine drehbare 3D-Neuberechnung. Bei reinem G-Code, fehlendem Bild, zu großen Archiven oder zu langsamer Übertragung wird der Grund angezeigt. Begrenzung: 24 MiB Archiv und 2 MiB eingebettetes Bild.
+- Eine oder mehrere Dateien auswählen, „Auswahl löschen …“ öffnen, die konkreten Dateinamen prüfen und die endgültige Löschung ausdrücklich bestätigen. Keine automatische Speicherbereinigung. Maximal 50 Dateien je Auswahl; ein Zeitlimit kann einen großen Stapel vorzeitig stoppen.
+- Vor der ersten Löschung wird die Auswahl erneut geprüft. Vor jeder Datei müssen Druckerleerlauf und Auftragszustand weiterhin passen; Dateigröße und Datum werden erneut verglichen. Laufende oder offene Aufträge schützen ihre Dateien. Bei Teilfehlern bleiben bereits erfolgte Löschungen bestehen; die Liste wird neu gelesen. Nicht ungeprüft wiederholen.
+
+Buchungsjournal, Filamentbestände und abgeschlossene Aufträge bleiben beim Löschen einer Druckerdatei erhalten. Eine Datei erneut drucken zu können erfordert danach die ursprüngliche Datei auf deinem Rechner oder eine eigene Sicherung. Dateien werden nicht automatisch vor dem Löschen archiviert. Der Reiter bietet keine Upload- oder Druckstartfunktion und keine freie Navigation in beliebige Drucker-Systemverzeichnisse.
 
 ## Kamera und Licht
 
