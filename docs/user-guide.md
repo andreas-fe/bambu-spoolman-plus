@@ -54,7 +54,7 @@ Die A1-Abbildung ist eine eigene schematische Darstellung. Eine gesunde Anwendun
 ### Normaler Rollenwechsel über die App
 
 1. Physische Rolle im gewünschten Schacht wechseln.
-2. Den Schacht in der Grafik oder über Slot 1–4 auswählen. Die Grafik ordnet 1/4 oben und 2/3 unten an; die externe Spule steht daneben.
+2. Den Schacht in der Grafik oder über Slot 1–4 auswählen. Die Grafik zeigt die Spulen mit grauen Flanschen dicht am zentralen Ständer und ordnet A1/A4 oben sowie A2/A3 unten an; die externe Spule steht daneben.
 3. Im Auswahlfeld die **konkrete Bestandsrolle** auswählen. Gleiche Produkte können mehrere unabhängige Rollen besitzen.
 4. Rechts die gewünschte Drucksteuerung wählen: Standard oder ein vorhandenes passendes Profil. Dann „← An Drucker senden …“ öffnen. Die Auswahl allein sendet noch keinen Befehl.
 5. Unter „Änderung prüfen“ bisherige und geplante Farbe, Materialfamilie, Rolle und gegebenenfalls bekanntes Druckerprofil prüfen.
@@ -168,6 +168,7 @@ Bei Abbruch lautet der Hinweis „Teilmenge bis Abbruch gebucht“. Die Grundlag
 |---|---|
 | RUNNING | Daten werden gesammelt; noch keine Verbrauchsabbuchung. |
 | WAITING_METADATA | Eindeutige Verbrauchs-/Platteninformationen fehlen; Datei und Erreichbarkeit prüfen. |
+| CLOSED_NO_USAGE | Ohne Verbrauchsbuchung ausdrücklich geschlossen; möglicher Materialverbrauch bleibt unbeziffert. |
 | WAITING_MAPPING | Zuordnung fehlt, ist mehrdeutig oder wurde druckrelevant geändert; Auftrag prüfen und bestätigen. |
 | DONE | Bestandsbuchung bestätigt. |
 | DRY_RUN | Nur simuliert; wird später nicht nachgebucht. |
@@ -178,6 +179,14 @@ Bei Abbruch lautet der Hinweis „Teilmenge bis Abbruch gebucht“. Die Grundlag
 Wenn beim Druckstart eine Bestandsrolle fehlte, zuerst die richtige Rolle dem betreffenden AMS-Schacht zuordnen und anschließend die Auftragszuordnung bestätigen. Diese Bestätigung ergänzt auch die ursprünglich leere Rollenbindung im Auftrag; bereits gespeicherte Rollen bleiben erhalten. Vorhandene Verbrauchsmetadaten genügen, selbst wenn die ursprüngliche Druckdatei nicht mehr erreichbar ist. Ohne gespeicherte Verbrauchsdaten kann eine Zuordnung allein keine Grammmenge erzeugen.
 
 Unter „Druckaufträge und Filamentzuordnung“ gilt die Bestätigung für genau diesen Auftrag. Bereits verarbeitete Positionen bleiben geschützt. Die tatsächliche Bestandsrolle und die Slicer-Filamentposition sind unterschiedliche Zuordnungsstufen. Einzelheiten: [Filament-Workflow](filament-workflow.md) und [Architektur](architecture.md).
+
+### Auftrag ohne Verbrauchsdaten schließen
+
+Bei einem beendeten Auftrag in WAITING_METADATA ohne gespeicherte Mengen erscheint „Auftrag ohne Buchung schließen“. Typischer Fall sind eigenständige Kalibrierungs-G-Code-Dateien, für die keine auswertbaren 3MF-Verbrauchsmetadaten vorliegen. Eine wiederholte Filamentzuordnung liefert dafür keine Grammmenge.
+
+Die Checkbox ausdrücklich bestätigen und „Auftrag ohne Buchung schließen“ wählen. Der Auftrag verschwindet aus den offenen Aufgaben und wird nicht automatisch erneut abgerechnet. Im Journal bleibt eine Position **„Ohne Buchung geschlossen“** mit Menge „—“ erhalten. Das ist keine Nullverbrauchsmessung: Tatsächlich verbrauchtes Material ist damit nicht erfasst und kann bei Bedarf über eine Bestands-/Wiegekorrektur berücksichtigt werden.
+
+Laufende Aufträge, ein gerade verarbeiteter Auftrag, vorhandene Mengen oder bereits angelegte Buchungspositionen bleiben geschützt. Es werden keine historischen Daten gelöscht und keine Gerätebefehle ausgelöst. Eine für diesen Auftrag aktivierte Abschaltautomatik führt dadurch nicht zum Ausschalten.
 
 ## Kamera und Licht
 

@@ -75,7 +75,7 @@ class AutoPowerOff:
         job,active,newer,review=self._job(config['job_id'])
         if not job or newer or (active and active!=config['job_id']):
             self._update(config,enabled=False,phase='cancelled',message='Automatik beendet: Neuer Druck oder Auftrag nicht mehr verfügbar.');return
-        if job['cancelled'] or job['state'] in ('FAILED','REJECTED','UNKNOWN','INTERRUPTED','CANCELLED_ZERO'):
+        if job['cancelled'] or job['state'] in ('FAILED','REJECTED','UNKNOWN','INTERRUPTED','CANCELLED_ZERO','CLOSED_NO_USAGE'):
             self._update(config,enabled=False,phase='cancelled',message='Automatik beendet: Druck abgebrochen oder Buchung nicht sicher abgeschlossen.');return
         if self.clock()-config.get('armed_at',0)>86400:
             self._update(config,enabled=False,phase='cancelled',message='Automatik nach 24 Stunden ohne sicheren Abschluss abgelaufen.');return

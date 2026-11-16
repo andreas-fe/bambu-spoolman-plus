@@ -52,7 +52,7 @@ class InventoryService:
                 for guard in db.execute("SELECT value FROM runtime WHERE key LIKE 'ams-job-review:%'") if 'runtime' in tables else []:
                     if any(str(change.get('after'))==str(spool_id) for change in json.loads(guard['value']).values()):
                         raise InventoryError('Diese Rolle benötigt noch eine Zuordnungsprüfung für einen Druckauftrag.')
-                closed = ('DONE','DRY_RUN','CANCELLED_ZERO','REJECTED','FAILED','INTERRUPTED')
+                closed = ('DONE','DRY_RUN','CANCELLED_ZERO','REJECTED','FAILED','INTERRUPTED','CLOSED_NO_USAGE')
                 for job in db.execute('SELECT id,state,slot_mapping_json,spools_snapshot_json FROM jobs'):
                     if job['state'] in closed:
                         continue

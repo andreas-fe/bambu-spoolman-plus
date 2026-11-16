@@ -14,7 +14,7 @@ Nach Deployment `/health`, tatsächlichen Backend-/Simulationsmodus, Inventarsei
 
 ## Automatisierte Prüfung
 
-**170 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
+**174 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
 
 Temporäre Testdaten auf NAS möglichst im Arbeitsspeicher (`--tmpfs /tmp:rw,size=256m`) halten. Das vermeidet langsame SQLite-Schreibtests im Container-Layer. Niemals produktive Datenverzeichnisse in einen Testlauf mounten.
 

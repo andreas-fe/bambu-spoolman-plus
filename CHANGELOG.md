@@ -1,5 +1,18 @@
 # Änderungen
 
+## 2026-11-16 — AMS-Lite-Grafik näher am Original
+
+- Schlankere, höhere Spulen mit ausgeprägten grauen Flanschen, direkter Materialbeschriftung und Bearbeiten-Symbol. Kürzere Arme rücken die Rollen deutlich näher an den zentralen Ständer.
+- Schachtbezeichnungen A1–A4, korrekte Reihenfolge, anklickbare Auswahl und aktive Filamentführung bleiben erhalten. Materialtext und Symbol wechseln passend zur Spulenhelligkeit zwischen heller und dunkler Darstellung. Externe Spule verwendet dieselbe Formensprache.
+- Browserprüfung für Auswahl, Filamentweg und mobile Darstellung; aktueller Beispielscreenshot ergänzt.
+
+## 2026-11-16 — Metadatenlose Aufträge ausdrücklich schließen
+
+- Für beendete, ungebuchte PRINT-Aufträge in WAITING_METADATA ohne gespeicherte Verbrauchsmengen gibt es „Auftrag ohne Buchung schließen“ mit ausdrücklicher Bestätigung.
+- Neuer Endzustand CLOSED_NO_USAGE entfernt den Auftrag aus offenen Aufgaben und Wiederholungsversuchen. Historie bleibt erhalten; das gemeinsame Journal zeigt „Ohne Buchung geschlossen“ mit Menge „—“ statt erfundener Null- oder Verbrauchswerte.
+- Laufende/gerade verarbeitete Aufträge, vorhandene Mengen, Buchungspositionen und gespeicherte Verbrauchspläne sind geschützt. Keine Bestandsänderung, keine Geräteaktion und kein automatisches Ausschalten durch diesen Abschluss.
+- 174 Tests lokal und im NAS-Container einschließlich Einmalabschluss, Bestätigungsschutz, Verbrauchsschutz, Journalnachweis und Abschaltsperre bestanden.
+
 ## 2026-11-16 — Kompaktes, einklappbares Buchungsjournal
 
 - Journal startet mit zehn Einträgen; „10 weitere Einträge laden“ ergänzt die nächste Seite bis zum Ende. Die gespeicherte Historie wird weder gelöscht noch gekürzt.

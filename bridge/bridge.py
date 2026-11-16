@@ -408,6 +408,24 @@ class Store:
                         (json.dumps(mapping), self.now(), job_id))
             return True
 
+    def close_without_usage(self, job_id: str) -> bool:
+        """Close an ended, unbooked metadata-less print without inventing usage."""
+        with self.connection() as con:
+            con.execute('BEGIN IMMEDIATE')
+            job=con.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+            active=con.execute("SELECT value FROM runtime WHERE key='active_job_id'").fetchone()
+            if not job or job['kind']!='PRINT' or job['state']!='WAITING_METADATA' or (active and active['value']==job_id):return False
+            try:
+                if json.loads(job['weights_json'] or '{}'):return False
+            except (ValueError,TypeError):return False
+            if con.execute('SELECT 1 FROM deductions WHERE job_id=?',(job_id,)).fetchone():return False
+            if con.execute('SELECT 1 FROM consumption_entries WHERE job_id=?',(job_id,)).fetchone():return False
+            if con.execute('SELECT 1 FROM inventory_job_plans WHERE job_id=?',(job_id,)).fetchone():return False
+            note='Ohne Verbrauchsbuchung manuell geschlossen: Keine belastbaren Verbrauchsdaten vorhanden. Ein möglicher Materialverbrauch ist damit nicht erfasst.'
+            con.execute('UPDATE jobs SET state=?,error=?,updated_at=? WHERE id=?',('CLOSED_NO_USAGE',note,self.now(),job_id))
+            con.execute('DELETE FROM runtime WHERE key=?',('ams-job-review:'+job_id,))
+            return True
+
     def create_manual_job(self, spool_id: int, slot: int | None, grams: float) -> str:
         job_id = str(uuid.uuid4())
         now = self.now()
@@ -438,6 +456,8 @@ class Store:
                 SELECT created_at,'deduction' AS kind,id FROM deductions
                 UNION ALL
                 SELECT created_at,'adjustment' AS kind,id FROM inventory_movements WHERE movement_type='adjustment'
+                UNION ALL
+                SELECT updated_at AS created_at,'closed' AS kind,rowid AS id FROM jobs WHERE state='CLOSED_NO_USAGE'
             )"""
             params=[]
             if before is not None:
@@ -447,6 +467,7 @@ class Store:
             keys=con.execute(sql,(*params,limit)).fetchall()
             ids=[r['id'] for r in keys if r['kind']=='deduction']
             correction_ids=[r['id'] for r in keys if r['kind']=='adjustment']
+            closed_ids=[r['id'] for r in keys if r['kind']=='closed']
             marks=','.join('?' for _ in ids) or 'NULL'
             rows=[dict(r) for r in con.execute(
                 "SELECT d.*,j.filename,j.subtask_name,j.created_at AS job_created_at,j.mapping_source,j.estimated,"
@@ -454,6 +475,8 @@ class Store:
                 f"WHERE d.id IN ({marks})",ids).fetchall()]
             correction_marks=','.join('?' for _ in correction_ids) or 'NULL'
             corrections=con.execute(f"SELECT * FROM inventory_movements WHERE id IN ({correction_marks})",correction_ids).fetchall()
+            closed_marks=','.join('?' for _ in closed_ids) or 'NULL'
+            closed_jobs=con.execute(f"SELECT rowid AS journal_id,* FROM jobs WHERE rowid IN ({closed_marks})",closed_ids).fetchall()
         for row in rows:
             row['journal_key']=[row['created_at'],'deduction',row['id']]
         for row in rows:
@@ -485,6 +508,11 @@ class Store:
                              job_id='adjustment:'+str(data['id']),filename=title,subtask_name=title,tray_id=None,spool_id=data['spool_id'],
                              grams=data['delta_g'],amount_label=(current+' Bestand') if weighed else f"{data['delta_g']:+g} g",
                              status='CORRECTED',status_label='Korrigiert',estimated=0,cancelled=0,detail=detail))
+        for job in closed_jobs:
+            rows.append(dict(journal_key=[job['updated_at'],'closed',job['journal_id']],id='closed:'+job['id'],entry_type='closed_without_usage',
+                             created_at=job['updated_at'],job_id=job['id'],filename=job['filename'],subtask_name=job['subtask_name'],
+                             tray_id=None,spool_id=None,grams=None,amount_label='—',status='CLOSED_NO_USAGE',
+                             status_label='Ohne Buchung geschlossen',estimated=0,cancelled=0,detail=job['error']))
         return sorted(rows,key=lambda row:tuple(row['journal_key']),reverse=True)
 
     def recoverable_jobs(self) -> list[str]:
@@ -503,6 +531,7 @@ class Store:
 store = Store(DB_PATH)
 apply_migrations(DB_PATH)
 with inventory_connection(DB_PATH) as db:
+    db.execute('CREATE INDEX IF NOT EXISTS jobs_closed_journal_idx ON jobs(state,updated_at DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS deductions_journal_time_idx ON deductions(created_at DESC,id DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS movements_journal_time_idx ON inventory_movements(movement_type,created_at DESC,id DESC)')
 inventory_service = InventoryService(DB_PATH)
@@ -934,7 +963,7 @@ def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, sto
 
 def process_job(job_id: str) -> None:
     job = store.get_job(job_id)
-    if not job or job['state'] in ('PREPARING', 'FAILED', 'INTERRUPTED', 'DRY_RUN', 'CANCELLED_ZERO'):
+    if not job or job['state'] in ('PREPARING', 'FAILED', 'INTERRUPTED', 'DRY_RUN', 'CANCELLED_ZERO', 'CLOSED_NO_USAGE'):
         return
     if job['kind'] == 'MANUAL':
         book_pending(job_id)
@@ -1504,6 +1533,7 @@ def job_mapping_forms():
         if any(row['status'] not in ('UNMAPPED', 'PENDING') or row['attempts'] > 0 for row in store.deductions_for_job(job['id'])):
             continue
         weights = json.loads(job['weights_json'] or '{}')
+        job['can_close_without_usage']=job['state']=='WAITING_METADATA' and not weights and not store.deductions_for_job(job['id'])
         mapping = json.loads(job['ams_mapping_json'] or '[]')
         mapping2 = json.loads(job['ams_mapping2_json'] or 'null')
         metadata = json.loads(job.get('filaments_json') or '{}')
@@ -1616,6 +1646,7 @@ HTML_TEMPLATE = r"""
     <p class="muted small">Automatische Vorschau und spätere Rückmeldungen erscheinen nach dem Neuladen. Verbrauch wird erst nach Druckende gebucht.</p>
     {% if job.assignment_summary %}<p><strong>{{ job.assignment_summary }}</strong></p>{% endif %}
     {% if job.error %}<p class="muted">{{ job.error }}</p>{% endif %}
+    {% if job.can_close_without_usage %}<p class="notice">Für diesen Auftrag fehlen Verbrauchsmengen. Eine Filamentzuordnung allein kann das nicht beheben. Du kannst ihn unten ohne Buchung schließen; die Entscheidung bleibt im Journal sichtbar.</p>{% else %}
     {% for filament in job.filaments %}
     <div class="slot">
       <label for="{{ job.id }}-f{{ filament.id }}">Filament {{ filament.id }}{% if filament.grams is not none %} · {{ '%.2f'|format(filament.grams) }} g{% endif %}
@@ -1628,8 +1659,13 @@ HTML_TEMPLATE = r"""
       </select>
     </div>
     {% endfor %}
-    <button type="submit" style="margin-top:10px">Zuordnung für diesen Auftrag bestätigen</button>
+    <button type="submit" style="margin-top:10px">Zuordnung für diesen Auftrag bestätigen</button>{% endif %}
   </form>
+  {% if job.can_close_without_usage %}<form method="post" action="{{ url_for('close_job_without_usage',job_id=job.id) }}" class="close-job-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="confirm" value="close-without-usage">
+    <label style="display:flex;flex-direction:row;gap:10px;align-items:center"><input type="checkbox" name="acknowledge" value="yes" required style="width:auto">Ohne Verbrauchsbuchung schließen. Möglichen Materialverbrauch korrigiere ich bei Bedarf separat.</label>
+    <button type="submit" class="secondary" style="margin:10px 0 24px">Auftrag ohne Buchung schließen</button>
+  </form>{% endif %}
   {% else %}<p class="muted">Kein Auftrag mit offener Filamentzuordnung.</p>{% endfor %}
 </section>
 
@@ -1713,7 +1749,7 @@ def journal_api():
         try:
             if len(token)>512:raise ValueError()
             before=URLSafeTimedSerializer(app.secret_key,salt='journal-cursor-v1').loads(token)
-            if not isinstance(before,list) or len(before)!=3 or not isinstance(before[0],str) or before[1] not in ('deduction','adjustment') or type(before[2]) is not int or before[2]<1:raise ValueError()
+            if not isinstance(before,list) or len(before)!=3 or not isinstance(before[0],str) or before[1] not in ('deduction','adjustment','closed') or type(before[2]) is not int or before[2]<1:raise ValueError()
         except (BadSignature,ValueError,TypeError):
             return jsonify(error='Ungültige Journalposition. Bitte die Seite neu laden.'),400
     return jsonify(journal_page(before))
@@ -1837,6 +1873,17 @@ def set_job_mapping(job_id):
         enqueue_job(job_id)
     log(f'Filamentzuordnung für Auftrag {job_id[:8]} durch Benutzer bestätigt.')
     return redirect(url_for('index'))
+
+@app.post('/jobs/<job_id>/close-without-usage')
+def close_job_without_usage(job_id):
+    if request.form.get('confirm')!='close-without-usage' or request.form.get('acknowledge')!='yes':
+        return Response('Bitte das Schließen ohne Verbrauchsbuchung ausdrücklich bestätigen.',400)
+    with queued_lock:
+        if job_id in queued_jobs or not store.close_without_usage(job_id):
+            return Response('Auftrag wird verarbeitet, ist aktiv, bereits geschlossen oder enthält Verbrauchs-/Buchungsdaten. Bitte Status aktualisieren.',409)
+    log('Auftrag ohne Verbrauchsbuchung manuell geschlossen; fehlende Verbrauchsdaten. Historie bleibt erhalten.')
+    return redirect(url_for('index'))
+
 
 @app.route('/settings', methods=['GET', 'POST'])
 def app_settings():

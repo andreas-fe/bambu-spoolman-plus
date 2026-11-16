@@ -1383,3 +1383,65 @@ def test_journal_cursor_survives_new_entries_and_bad_tokens_are_rejected(bridge)
 def test_empty_journal_has_no_next_page(bridge):
     data=bridge.app.test_client().get('/api/journal').json
     assert data==dict(entries=[],has_more=False,next_cursor=None)
+
+
+def metadata_less_ended_job(b):
+    job=finished_job(b)
+    b.store.update_job(job,state='WAITING_METADATA',weights_json=None)
+    return job
+
+
+def test_close_metadata_less_job_preserves_audit_without_consumption(bridge):
+    b=bridge;job=metadata_less_ended_job(b);c=b.app.test_client();html=c.get('/').text
+    assert '/jobs/'+job+'/close-without-usage' in html
+    assert 'Ohne Verbrauchsbuchung schließen.' in html
+    assert next(j for j in b.job_mapping_forms() if j['id']==job)['can_close_without_usage']
+    with c.session_transaction() as session:token=session['csrf_token']
+    with b.store.connection() as db:
+        before={t:db.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in ['deductions','consumption_entries','inventory_movements']}
+    data=dict(csrf_token=token,confirm='close-without-usage',acknowledge='yes')
+    assert c.post('/jobs/'+job+'/close-without-usage',data=data).status_code==302
+    assert b.store.get_job(job)['state']=='CLOSED_NO_USAGE'
+    assert job not in b.store.recoverable_jobs()
+    assert not any(j['id']==job for j in b.job_mapping_forms())
+    b.process_job(job)  # Neither metadata download nor booking after closure.
+    assert c.post('/jobs/'+job+'/close-without-usage',data=data).status_code==409
+    assert not b.store.set_job_mapping(job,[0])
+    rows=[r for r in c.get('/api/journal').json['entries'] if r['job_id']==job]
+    assert len(rows)==1 and rows[0]['entry_type']=='closed_without_usage' and rows[0]['amount_label']=='—' and rows[0]['grams'] is None
+    with b.store.connection() as db:
+        assert before=={t:db.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in before}
+
+
+def test_close_rejects_missing_ack_busy_active_and_known_usage(bridge):
+    b=bridge;c=b.app.test_client();c.get('/settings')
+    with c.session_transaction() as session:token=session['csrf_token']
+    job=metadata_less_ended_job(b);url='/jobs/'+job+'/close-without-usage'
+    data=dict(csrf_token=token,confirm='close-without-usage',acknowledge='yes')
+    assert c.post(url,data=dict(data,acknowledge='')).status_code==400
+    assert c.post(url,data=dict(data,csrf_token='invalid')).status_code==403
+    b.queued_jobs.add(job)
+    assert c.post(url,data=data).status_code==409
+    b.queued_jobs.clear()
+    with b.store.connection() as db:db.execute("UPDATE runtime SET value=? WHERE key='active_job_id'",(job,))
+    assert c.post(url,data=data).status_code==409
+    with b.store.connection() as db:db.execute("UPDATE runtime SET value=NULL WHERE key='active_job_id'")
+    b.store.update_job(job,weights_json='{"1":1}')
+    assert c.post(url,data=data).status_code==409
+    b.store.update_job(job,weights_json=None,state='RUNNING')
+    assert c.post(url,data=data).status_code==409
+    assert c.post('/jobs/missing/close-without-usage',data=data).status_code==409
+
+
+def test_close_rejects_even_unattempted_existing_deductions(bridge):
+    b=bridge;job=metadata_less_ended_job(b)
+    b.store.replace_unattempted_plan(job,[dict(source_key='test',filament_id=1,tray_id=None,spool_id=None,grams=1,status='UNMAPPED')])
+    assert not b.store.close_without_usage(job)
+    assert len(b.store.deductions_for_job(job))==1
+
+
+def test_closed_job_disables_auto_power(bridge):
+    auto,job,now,calls,safe=auto_power_test_context(bridge)
+    complete_auto_job(bridge,job,state='CLOSED_NO_USAGE')
+    auto.poll()
+    assert not auto.status()['enabled'] and not calls
