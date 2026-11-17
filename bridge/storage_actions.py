@@ -84,7 +84,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
             with lock:
                 check(job)
                 if plate is not None:
-                    save_model(cache,entry,plate,result);job.update(state='done',model=result)
+                    save_model(cache,entry,plate,result);job.update(state='done',model_entry=entry)
                 else:
                     with cache.lock:
                         cache.db.execute('INSERT OR REPLACE INTO storage_metadata VALUES (?,?,?)',(cache.key(entry),json.dumps(result),time.time()))
@@ -166,7 +166,9 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
     def details_progress():
         with lock:job=jobs.get(request.args.get('ticket'))
         if not job or time.monotonic()-job['created']>900:return jsonify(error='Dateiprüfung abgelaufen. Bitte erneut öffnen.'),404
-        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),draft_metadata=job.get('draft_metadata'),model=job.get('model'),phase=job.get('phase'),error=job.get('error'))
+        model=cached_model(cache,job['model_entry'],job['plate']) if job['state']=='done' and 'model_entry' in job else None
+        if job['state']=='done' and 'model_entry' in job and model is None:return jsonify(state='error',error='3D-Cache wurde geleert. Bitte Vorschau erneut laden.')
+        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),draft_metadata=job.get('draft_metadata'),model=model,phase=job.get('phase'),error=job.get('error'))
     @app.get('/api/storage/history')
     def storage_history():
         try:

@@ -89,7 +89,7 @@ Nach FINISH werden die Grammwerte der ausgewählten Platte gebucht. Bei Abbruch 
 
 ## Validierung und bekannte Grenzen
 
-Stand 17. November 2026: **249 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
+Stand 17. November 2026: **252 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
 
 Am Referenzsystem wurden Licht, manuelles Schalten und ein tatsächlicher AMS-Farbwechsel im Leerlauf geprüft; ursprüngliche Farbe und Bestandsbindung wurden danach wiederhergestellt. Ein echter Farbwechsel während eines laufenden Drucks nach Modusumstellung sowie ein vollständiger automatischer Abschaltzyklus der neuen Funktion sind noch nicht hardwarebestätigt. Das ist kein Freigabenachweis für andere Modelle oder Firmwarestände.
 
@@ -106,4 +106,4 @@ Private `.env`, SSH-Schlüssel, Passwörter, Druckerzugänge, Datenbanken, Logs 
 
 Druckkosten: Kaufpreis je Rolle und Strompreis in den Einstellungen; eingefrorene Preise je Buchung, browserunabhängige Tapo-Leistungsmessung je Auftrag und eine Kostenübersicht mit sichtbarer Messabdeckung. Details und Grenzen stehen in der [Bedienungsanleitung](docs/user-guide.md#druckkosten-rollenpreis-und-stromtarif).
 
-3D-Prototyp: Im Druckerspeicher zeigt „Details & Drucken“ auf Wunsch eine dreh- und zoombare Druckwegvorschau der ausgewählten Platte. Vollständig lokal, abbrechbar und mit begrenztem Geometriecache; Darstellung und Grenzen sind in der [Bedienungsanleitung](docs/user-guide.md#3d-druckwegvorschau--erster-prototyp) beschrieben.
+3D-Druckwegvorschau: Unter „Vorschau öffnen“ und „Details & Drucken“ lassen sich Modelle drehen und zoomen, schichtweise betrachten sowie von oben/vorne oder im Vollbild anzeigen. Kreisbögen werden aufgelöst, markierte Start-/Reinigungsbahnen ausgeblendet und Bahnen räumlich beleuchtet dargestellt. Vollständig lokal, abbrechbar und mit begrenztem Cache; siehe [Bedienungsanleitung](docs/user-guide.md#3d-druckwegvorschau).

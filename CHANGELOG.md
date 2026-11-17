@@ -1,5 +1,14 @@
 # Änderungen
 
+## 2026-11-17 — Überarbeitete 3D-Vorschau
+
+- Gemeinsamer Betrachter in „Vorschau öffnen“ und „Details & Drucken“, ausdrücklich nachladbar; zusätzliche Modellplattenauswahl im Vorschaudialog.
+- Räumliche beleuchtete Druckbahnen mit Slicerbreite/-höhe statt dünner Linien; instanziertes WebGL mit Linienfallback. Schichtregler, feste Ansichten und Vollbild ergänzen Maus-/Touch-/Tastaturbedienung.
+- IJK-/R-Kreisbögen, Vollkreise, Helices und Ebenenwechsel rekonstruiert. Markierte Start-/Reinigungsbahnen und Wipe-Tower ausgeblendet; Modellgrenzen nur aus verbleibender Geometrie.
+- Keine pauschale Segmentausdünnung mehr: exakte kollineare Zusammenfassung, ansonsten vollständige Konturen bis zur dokumentierten Grenze. Parser-Version 3 trennt alte Cacheergebnisse. Große Resultate bleiben nach Fertigstellung nur im begrenzten komprimierten Cache.
+- Architektur bleibt vollständig lokal; keine Übernahme fremden Viewer-Codes, keine zusätzlichen Browserbibliotheken oder externen Dienste. Bedienideen aus den drei in der Anleitung verlinkten Viewerprojekten bewertet.
+- 252 Tests lokal und im NAS-Container bestanden; vier betroffene reale Druckdateien erfolgreich rekonstruiert und im Browser dargestellt, inklusive Schichtwahl, Ansichten, Vollbild, Abbruch, Ressourcenfreigabe und Mobilansicht. Vollsicherung und verlustfreier Testimport vor NAS-Aktivierung; reale 3MF, identischer Cachetreffer und Transferabbruch am A1 bestätigt. Native Filament-, Zuordnungs- und Kostendaten unverändert.
+
 ## 2026-11-17 — Einklappbare Produkte und erster 3D-Druckwegprototyp
 
 - Filamentprodukte sind standardmäßig eingeklappt und merken sich ihren eigenen Browserzustand. Bearbeiten, Anlegen, Produktlinks und Speichern öffnen den Bereich automatisch; bewusstes Schließen entfernt überholte Bearbeitungslinks. Die zusätzliche Inventarverwaltung bleibt unabhängig einklappbar.

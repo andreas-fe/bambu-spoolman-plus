@@ -23,15 +23,17 @@ def test_extruded_paths_modes_retractions_and_colors():
     assert result['segments']==4 and result['bounds']==[[0.,0.,0.],[25.,15.,1.]]
     positions=struct.unpack('<24f',base64.b64decode(result['positions']));assert positions[:6]==(0,0,0,10,0,0)
     colors=base64.b64decode(result['colors']);assert colors[:6]==bytes.fromhex('FFFFFF')*2 and colors[6:12]==bytes.fromhex('C59B27')*2
-    assert any('kein CAD' in w for w in result['warnings'])
+    assert len(base64.b64decode(result['dimensions']))==result['segments']*8
 
 
-def test_sampling_preserves_full_bounds_and_limits(monkeypatch):
+def test_collinear_merge_preserves_paths_and_limits(monkeypatch):
     import bridge.model_preview as module
     monkeypatch.setattr(module,'MAX_SEGMENTS',8)
     result=build_model(io.BytesIO(archive('M83\n'+''.join(f'G1 X{i} Z{i} E1\n' for i in range(1,101)))),3,metadata())
     assert result['segments']<=8 and result['total_segments']==100 and result['bounds'][1]==[100.,0.,100.]
-    assert any('vereinfacht' in w for w in result['warnings'])
+    assert result['segments']==1
+    with pytest.raises(ValueError,match='Geometriegrenze'):
+        build_model(io.BytesIO(archive('M83\n'+''.join(f'G1 X{i} Y{i%2} E1\n' for i in range(30)))),3,metadata())
     for text in ['G20\nG1 X2 E1','G1 X10001 E1','G1 X10\n']:
         with pytest.raises(ValueError):build_model(io.BytesIO(archive(text)),3,metadata())
     def cancel():raise RuntimeError('cancel')
@@ -84,3 +86,40 @@ def test_long_bambu_configuration_comments_are_skipped_without_losing_commands()
     result=build_model(io.BytesIO(archive(text)),3,metadata())
     assert result['segments']==2 and result['bounds'][1]==[10.,10.,0.]
     with pytest.raises(ValueError,match='4 KiB'):build_model(io.BytesIO(archive('G1 '+('X1 '*2000)+'E1\n')),3,metadata())
+
+
+def test_arcs_full_circle_radius_helix_and_plane():
+    from bridge.model_preview import arc_points
+    import math
+    for clockwise in (False,True):
+        points=list(arc_points((10,0,0),(10,0,2),{'I':-10,'J':0},clockwise))
+        assert len(points)>30 and points[-1]==(10,0,2)
+        assert all(abs(math.hypot(p[0],p[1])-10)<1e-7 for p in points)
+        assert (points[0][1]<0)==clockwise
+    short=list(arc_points((0,0,0),(10,0,0),{'R':10},False))
+    long=list(arc_points((0,0,0),(10,0,0),{'R':-10},False))
+    assert len(long)>len(short)*3
+    absolute=list(arc_points((10,0,0),(0,10,0),{'I':0,'J':0},False,absolute_center=True))
+    assert absolute[-1]==(0,10,0) and all(p[0]>=-1e-8 and p[1]>=0 for p in absolute)
+    yz=list(arc_points((0,10,0),(0,0,10),{'J':-10,'K':0},False,plane=19))
+    assert yz[-1]==(0,0,10) and all(p[0]==0 for p in yz)
+
+
+def test_bambu_layers_remove_start_and_custom_paths_without_resetting_machine_state():
+    code='M83\nG1 X250 Y250 E2\n; CHANGE_LAYER\nG0 X10 Y10 Z0.2\n; FEATURE: Outer wall\n; LINE_WIDTH: 0.45\n; LAYER_HEIGHT: 0.2\nG1 X20 E1\nG3 X10 Y20 I-10 J0 E1\n; FEATURE: Custom\nG1 X240 E1\n; FEATURE: Inner wall\nG0 X10 Y10\nG1 Y20 E1\n'
+    result=build_model(io.BytesIO(archive(code)),3,metadata())
+    assert result['arc_commands']==1 and result['removed_segments']==2
+    assert result['bounds']==[[10.,10.,.2],[20.,20.,.2]]
+    assert result['segments']>4
+    dims=struct.unpack('<2f',base64.b64decode(result['dimensions'])[:8])
+    assert dims==pytest.approx((.45,.2))
+
+
+def test_model_cache_cleared_before_completed_poll_is_explicit(tmp_path):
+    data=archive('M83\nG1 X20 E1\n');ftp=FTP();ftp.size=len(data);ftp.transfercmd=lambda cmd:FTPStream(data)
+    app=Flask(__name__);app.secret_key='test';register_storage(app,lambda:ftp,lambda n:None,lambda:True,lambda s:None,cache_path=tmp_path/'cache.sqlite3')
+    client=app.test_client();entry=client.get('/api/storage?folder=/').json['files'][0]
+    start=client.post('/storage/model',data=dict(file=entry['token'],plate=3,viewer='clear')).json
+    assert wait(client,start['ticket'])['state']=='done'
+    client.post('/storage/preview-cache/clear',data={'confirm':'clear-previews'})
+    result=wait(client,start['ticket']);assert result['state']=='error' and 'Cache' in result['error']
