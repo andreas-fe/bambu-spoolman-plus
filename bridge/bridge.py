@@ -1298,12 +1298,13 @@ def storage_context():
     if DRY_RUN or not mqtt_client or not mqtt_client.is_connected() or not storage_idle():
         raise ValueError('Druckstart erfordert Live-Betrieb und bestätigten frischen Leerlauf.')
     if not printer_status.get('nozzle_diameter'):refresh_calibration_profiles()
+    from bridge.print_start import pressure_status
     mapping=load_mapping();stock={str(s['id']):s for s in fetch_spoolman_spools()};slots=[]
     for key in ('0','1','2','3','external'):
         spool=stock.get(str(mapping.get(key)),{});tray=ams_state.get(int(key),{}) if key!='external' else {}
         label='Externe Rolle' if key=='external' else 'AMS Slot '+str(int(key)+1)
         fil=spool.get('filament') or {}
-        slots.append(dict(slot=key,label=label,available=bool(spool) if key=='external' else bool(tray.get('known') and tray.get('available') and time.time()-tray.get('seen_at',0)<=120),material=spool.get('material','') if key=='external' else tray.get('material',''),color=spool.get('clean_color','') if key=='external' else tray.get('color',''),spool_id=spool.get('id'),spool_material=spool.get('material') or fil.get('material',''),spool_color=spool.get('clean_color',''),spool_name=fil.get('name','Keine Bestandsrolle')))
+        slots.append(dict(slot=key,label=label,available=bool(spool) if key=='external' else bool(tray.get('known') and tray.get('available') and time.time()-tray.get('seen_at',0)<=120),material=spool.get('material','') if key=='external' else tray.get('material',''),color=spool.get('clean_color','') if key=='external' else tray.get('color',''),spool_id=spool.get('id'),spool_material=spool.get('material') or fil.get('material',''),spool_color=spool.get('clean_color',''),spool_name=fil.get('name','Keine Bestandsrolle'),**(pressure_status(tray,printer_status) if key!='external' else dict(pressure_profile='Externe Rolle · kein AMS-Schachtprofil',pressure_index=None,pressure_k=None))))
     return dict(model=os.getenv('BAMBU_MODEL','Bambu Lab A1'),nozzle=printer_status.get('nozzle_diameter'),slots=slots)
 
 

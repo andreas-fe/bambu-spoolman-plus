@@ -34,3 +34,17 @@ def test_external_role_is_single_filament_only():
     assert not prepare_start(e,m,c,x)['payload']['use_ams']
     m['plates'][0]['filaments'].append(dict(id=1,material='PLA',color='#FFFFFF'));c['mapping']['1']='external'
     with pytest.raises(ValueError):prepare_start(e,m,c,x)
+
+
+def test_reported_pressure_is_shown_and_changes_start_fingerprint():
+    from bridge.print_start import pressure_status
+    tray=dict(cali_idx=3,k='0.025',tray_info_idx='PLA-template')
+    printer=dict(nozzle_diameter='0.4',calibration_profiles=[dict(cali_idx=3,k_value=.025,filament_id='PLA-template',nozzle_diameter='0.4',name='PLA Blue')])
+    status=pressure_status(tray,printer)
+    assert status['pressure_profile']=='PLA Blue' and status['pressure_k']==.025
+    e,m,c,x=inputs();x['slots'][0].update(status);first=prepare_start(e,m,c,x)
+    assert any('0.0250' in line for line in first['summary'])
+    x['slots'][0]['pressure_k']=.03
+    assert prepare_start(e,m,c,x)['fingerprint']!=first['fingerprint']
+    assert pressure_status(dict(cali_idx=-1,k=None),printer)['pressure_profile'].startswith('Standard')
+    assert pressure_status({},printer)['pressure_k'] is None

@@ -358,3 +358,17 @@ Beim Referenz-A1 liegen die verbindlichen Druckdaten am Archivende, und dessen F
 Im Druckerspeicher **Umbenennen …** wählen, den Namen ohne Dateiendung eingeben und bestätigen. Die bisherige Endung bleibt erhalten. Dateien werden innerhalb ihres bisherigen Verzeichnisses umbenannt; vorhandene Zielnamen und Dateien laufender/offener Aufträge werden abgelehnt. Die App prüft Datei und Leerlauf erneut und überschreibt keine vorhandenen Dateien.
 
 Bereits geladene Vorschaubilder und Metadaten werden für den neuen Namen übernommen. Die Historie berücksichtigt bekannte frühere Dateinamen; vorhandene Journalzeilen werden nicht umgeschrieben. Wie bisher können später erneut verwendete identische Dateinamen nicht zuverlässig als dieselbe physische Datei erkannt werden.
+
+### Dateiprüfung abbrechen und anderes Modell öffnen
+
+**Schließen** oder **Escape** beendet einen noch laufenden Metadaten-Download. Auch beim Wegnavigieren von der Seite wird der Abbruch angefordert. Der Server schließt die Datenverbindung, verwirft die unvollständige temporäre Datei und gibt den Dateizugriff wieder frei. Danach lassen sich die Modellliste und ein anderer Druckdialog wieder öffnen. Antworten eines inzwischen geschlossenen Dialogs ersetzen keine neuere Auswahl. Wird dieselbe Prüfung in einem zweiten Fenster noch benötigt, läuft sie für dieses Fenster weiter. Bereits vollständig geprüfte Cacheeinträge bleiben erhalten.
+
+### Profil und K-Faktor bei einer anderen Filamentzuordnung
+
+Im Druckdialog wird eine Slicer-Filamentposition einem vorhandenen AMS-Schacht zugeordnet. Diese Auswahl schreibt keine neue Farbe, keinen neuen Filamenttyp und keinen K-Faktor in den Schacht. Sie ersetzt auch kein Slicerprofil in der fertig geslicten 3MF.
+
+Unter jeder Auswahl werden das **gemeldete Schachtprofil** und der **gemeldete K-Faktor** angezeigt, soweit der Drucker diese Daten geliefert hat. „Standard“ bedeutet kein ausgewähltes gespeichertes Profil, nicht zwingend K = 0. Fehlende Daten werden als unbekannt dargestellt.
+
+Über **Drucksteuerung im AMS prüfen / ändern** öffnet sich die vorhandene AMS-Verwaltung direkt beim gewählten Schacht. Dort das zur eingelegten Rolle passende Profil bewusst wählen und die Änderung bestätigen. Anschließend im Druckdialog **Druckerangaben aktualisieren** betätigen. Die Auswahl bleibt erhalten; eine alte Startprüfung wird verworfen. Profil-/K-Änderungen zwischen Prüfung und Start machen eine erneute Prüfung erforderlich.
+
+Eine angeforderte dynamische Flusskontrolle bleibt eine separate Druckoption. Sie ist kein automatischer Austausch aller Slicerparameter. Bei einem anderen Material oder wesentlich anderem Filamentprofil gegebenenfalls mit passendem Profil neu slicen.

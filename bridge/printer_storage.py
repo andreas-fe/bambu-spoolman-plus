@@ -95,7 +95,7 @@ def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namesp
         return render_ui(PAGE,active='storage',title='Druckerspeicher',token=session['csrf_token'])
     @app.get('/api/storage')
     def storage_list():
-        if not storage.lock.acquire(False):return jsonify(error='Dateizugriff läuft bereits. Bitte kurz warten.'),409
+        if not storage.lock.acquire(timeout=.5):return jsonify(error='Dateizugriff läuft bereits. Bitte kurz warten.'),409
         try:
             with storage.connection() as ftp:rows=storage.listing(ftp,request.args.get('folder','/'))
             for row in rows:

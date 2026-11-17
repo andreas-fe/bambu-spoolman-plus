@@ -17,9 +17,16 @@ def test_paths_listing_and_thumbnail():
     with pytest.raises(Exception):streamed_thumbnail(io.BytesIO(b'invalid').read)
 
 
+class FTPStream(io.BytesIO):
+    def recv(self,size):return self.read(size)
+    def shutdown(self,how):self.close()
+
+
 class FTP:
     def __init__(self):self.deleted=[];self.closed=False;self.size=12
     def retrlines(self,cmd,callback):callback('-rw-r--r-- 1 a b '+str(self.size)+' Nov 16 10:00 Example.3mf')
+    def voidcmd(self,command):pass
+    def voidresp(self):pass
     def delete(self,path):self.deleted.append(path)
     def quit(self):self.closed=True
     def close(self):self.closed=True
@@ -144,7 +151,7 @@ def test_background_details_and_single_use_review_guard_file_change():
         z.writestr('Metadata/project_settings.config','{"printer_model":"Bambu Lab A1","filament_type":["PLA","PLA"]}')
     data=data.getvalue();ftp=FTP();ftp.size=len(data);transfers=[];starts=[]
     def transfer(command,write,blocksize=8192):transfers.append(command);write(data)
-    ftp.retrbinary=transfer
+    ftp.transfercmd=lambda command:(transfers.append(command),FTPStream(data))[1]
     handlers=dict(context=lambda:ctx,history=lambda n:[dict(state='DONE')],prepare=lambda e,m,c:prepare_start(e,m,c,ctx),start=lambda r:(starts.append(r),dict(confirmed=True))[1])
     app=Flask(__name__);app.secret_key='actions-test'
     register_storage(app,lambda:ftp,lambda n:None,lambda:True,lambda s:None,handlers=handlers)
@@ -180,7 +187,9 @@ def test_rename_preserves_cache_and_history_and_refuses_overwrite():
         def __init__(self):self.files={'Original.gcode.3mf':data,'Exists.gcode.3mf':data};self.renamed=[];self.transfers=0
         def retrlines(self,command,callback):
             for name,content in self.files.items():callback('-rw-r--r-- 1 a b '+str(len(content))+' Nov 16 10:00 '+name)
-        def retrbinary(self,command,write,blocksize=8192):self.transfers+=1;write(self.files[command[5:].split('/')[-1]])
+        def voidcmd(self,command):pass
+        def voidresp(self):pass
+        def transfercmd(self,command):self.transfers+=1;return FTPStream(self.files[command[5:].split('/')[-1]])
         def rename(self,a,b):self.files[b.split('/')[-1]]=self.files.pop(a.split('/')[-1]);self.renamed.append((a,b))
         def quit(self):pass
         def close(self):pass
@@ -216,7 +225,11 @@ def test_draft_does_not_enable_server_start_until_full_inspection():
         z.writestr('Metadata/slice_info.config','<config><plate><metadata key="index" value="3"/><filament id="1" type="PLA" used_g="1"/></plate></config>')
     content=source.getvalue();release=threading.Event();ftp=FTP();ftp.size=len(content);calls=[]
     def transfer(command,write,blocksize=8192):write(content[:65536]);release.wait(3);write(content[65536:])
-    ftp.retrbinary=transfer
+    class Paused(FTPStream):
+        def recv(self,size):
+            if self.tell()>=65536:release.wait(3)
+            return super().recv(size)
+    ftp.transfercmd=lambda command:Paused(content)
     app=Flask(__name__);app.secret_key='draft-guard'
     register_storage(app,lambda:ftp,lambda name:None,lambda:True,lambda s:None,handlers=dict(history=lambda n:[],context=lambda:{},prepare=lambda *a:(calls.append(True),dict(summary=['OK']))[1],start=lambda *a:{}))
     c=app.test_client();entry=c.get('/api/storage?folder=/cache').json['files'][0];ticket=c.post('/storage/details',data=dict(file=entry['token'])).json['ticket']
@@ -228,3 +241,64 @@ def test_draft_does_not_enable_server_start_until_full_inspection():
         assert d['state']=='loading' and d['draft_metadata']['draft']
         assert c.post('/storage/start-review',data=dict(file=entry['token'],choice='{}')).status_code==409 and not calls
     finally:release.set()
+
+
+def test_cancel_interrupts_blocked_socket_frees_storage_and_does_not_cache_partial():
+    import threading,time
+    from tests.test_archive_preview import archive
+    data=archive(stream=True);sockets=[];reads=[]
+    class Blocking(FTPStream):
+        def __init__(self):super().__init__(data);self.release=threading.Event();self.entered=threading.Event();self.aborted=False
+        def recv(self,size):
+            if self.tell()>=65536:
+                self.entered.set();self.release.wait(3)
+                if self.aborted:return b''
+            reads.append(True);return super().recv(size)
+        def shutdown(self,how):self.aborted=True;self.release.set()
+    ftp=FTP();ftp.size=len(data)
+    def transfer(command):
+        stream=Blocking();sockets.append(stream);return stream
+    ftp.transfercmd=transfer
+    app=Flask(__name__);app.secret_key='cancel-test'
+    register_storage(app,lambda:ftp,lambda name:None,lambda:True,lambda s:None)
+    c=app.test_client();entry=c.get('/api/storage?folder=/cache').json['files'][0]
+    response=c.post('/storage/details',data=dict(file=entry['token'],viewer='viewer-one'));ticket=response.json['ticket']
+    until=time.monotonic()+2
+    while not sockets and time.monotonic()<until:time.sleep(.01)
+    assert sockets[0].entered.wait(1)
+    start=time.monotonic()
+    assert c.post('/storage/details/cancel',data=dict(ticket=ticket,file=entry['token'],viewer='viewer-one')).status_code==200
+    while time.monotonic()-start<1:
+        progress=c.get('/api/storage/details',query_string=dict(ticket=ticket)).json
+        if progress['state']=='cancelled' and c.get('/api/storage?folder=/cache').status_code==200:break
+        time.sleep(.01)
+    assert progress['state']=='cancelled' and time.monotonic()-start<1 and sockets[0].aborted
+    assert progress['received']<len(data)
+    # A new view starts a new transfer; no partially parsed result was cached.
+    again=c.post('/storage/details',data=dict(file=entry['token'],viewer='viewer-two'))
+    assert again.status_code==202 and again.json['ticket']!=ticket
+    c.post('/storage/details/cancel',data=dict(ticket=again.json['ticket'],viewer='viewer-two'))
+
+
+def test_close_before_start_is_idempotent_and_shared_view_is_not_cancelled():
+    import threading,time
+    from tests.test_archive_preview import archive
+    data=archive(stream=True);hold=threading.Event();streams=[]
+    class Held(FTPStream):
+        def recv(self,size):hold.wait(2);return b''
+        def shutdown(self,how):hold.set()
+    ftp=FTP();ftp.size=len(data)
+    def transfer(command):s=Held(data);streams.append(s);return s
+    ftp.transfercmd=transfer;app=Flask(__name__);app.secret_key='lease-test'
+    register_storage(app,lambda:ftp,lambda name:None,lambda:True,lambda s:None)
+    c=app.test_client();entry=c.get('/api/storage?folder=/cache').json['files'][0]
+    c.post('/storage/details/cancel',data=dict(file=entry['token'],viewer='closed-before-response'))
+    assert c.post('/storage/details',data=dict(file=entry['token'],viewer='closed-before-response')).json['state']=='cancelled' and not streams
+    ticket=c.post('/storage/details',data=dict(file=entry['token'],viewer='view-a')).json['ticket']
+    assert c.post('/storage/details',data=dict(file=entry['token'],viewer='view-b')).json['ticket']==ticket
+    c.post('/storage/details/cancel',data=dict(ticket=ticket,viewer='view-a'))
+    assert not hold.is_set() and c.get('/api/storage/details',query_string=dict(ticket=ticket)).json['state']=='loading'
+    c.post('/storage/details/cancel',data=dict(ticket=ticket,viewer='view-b'))
+    until=time.monotonic()+1
+    while c.get('/api/storage/details',query_string=dict(ticket=ticket)).json['state']=='loading' and time.monotonic()<until:time.sleep(.01)
+    assert c.get('/api/storage/details',query_string=dict(ticket=ticket)).json['state']=='cancelled'

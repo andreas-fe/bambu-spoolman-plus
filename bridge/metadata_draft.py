@@ -9,14 +9,22 @@ from .archive_preview import streamed_entries
 
 class DraftCollector:
     def __init__(self,publish):
-        self.queue=queue.Queue(maxsize=4);self.finished=threading.Event();self.publish=publish
+        self.queue=queue.Queue(maxsize=4);self.finished=threading.Event();self.publish=publish;self.cancelled=threading.Event()
         self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
     def feed(self,data):
         while not self.finished.is_set():
             try:self.queue.put(data,timeout=.1);return
             except queue.Full:continue
+    def abort(self):
+        self.cancelled.set();self.finished.set()
+        try:
+            while True:self.queue.get_nowait()
+        except queue.Empty:pass
+        try:self.queue.put_nowait(b'')
+        except queue.Full:pass
     def close(self):self.feed(b'');self.thread.join(timeout=1)
     def receive(self,size):
+        if self.cancelled.is_set():return b''
         data=self.queue.get(timeout=15)
         if len(data)>size:self.pending=data[size:];return data[:size]
         return data

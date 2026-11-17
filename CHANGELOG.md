@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2026-11-17 — Abbrechbare Dateiprüfung und sichtbare Drucksteuerung
+
+- Schließen, Escape und Seitenwechsel brechen laufende Detaildownloads ab. Daten-/Steuerkanäle werden geschlossen, unvollständige Dateien verworfen und Dateizugriffe wieder freigegeben. Schneller Modellwechsel und verspätete Antworten werden abgefangen; weitere offene Ansichten derselben Datei bleiben berücksichtigt.
+- Profil und gemeldeter K-Faktor des gewählten AMS-Schachts direkt im Druckdialog, mit Verknüpfung zur vorhandenen AMS-Profilwahl und Aktualisierung der Druckerangaben. Keine versteckte Profil-/K-Änderung durch bloßes Zuordnen. Geänderte Drucksteuerung macht eine alte Startprüfung ungültig.
+- 223 Tests lokal und im NAS-Container bestanden, einschließlich unterbrochenem blockierendem Datenkanal, Freigabe des Dateizugriffs, fehlendem Teilcache, Abbruch vor Registrierung, mehreren Ansichten und Profil-/K-Fingerabdruck. Browserprüfung für Schließen/ESC, verspätete Antworten, schnellen Modellwechsel und Profilanzeige. Am A1 wurde ein laufender 21,5-MB-Transfer nach 8 KiB abgebrochen; die Dateiliste war nach rund 0,9 Sekunden wieder erreichbar. Ein anderes Modell wurde anschließend vollständig geprüft. Vollsicherung, verlustfreier Testimport und unveränderte Bestände/Zuordnungen/Journal bestätigt.
+
 ## 2026-11-17 — Direkte lokale Einstellungen und flüssigere Dateiverwaltung
 
 - Details-Dialog mit sofort bedienbaren Optionen und früher Anzeige vorläufiger Platten-/Filamentdaten. Vollständige Prüfung bleibt Startvoraussetzung; bereits gewählte Optionen und Rollen werden erhalten. Kein 3D-Neurendering, vorhandener Metadatencache bleibt wirksam.
