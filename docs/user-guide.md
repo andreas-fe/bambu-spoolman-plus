@@ -211,7 +211,7 @@ Der App-Bildcache speichert ausschließlich extrahierte Vorschaubilder auf dem N
 
 Der Bereich **Druckcache (`/cache`) auf dem Drucker** enthält dagegen unter anderem übertragene Druckdateien. Alte Dateien abgeschlossener Drucke können gezielt entfernt werden, wenn sie nicht mehr zum erneuten Drucken gebraucht werden oder die ursprüngliche Datei anderweitig gesichert ist. Nicht den kompletten Ordner blind leeren und keine Systemdateien löschen. Die GUI erlaubt nur ausgewählte reguläre Druckdateien, schützt laufende/offene Aufträge und verlangt Leerlauf. Eine automatische Bereinigung dieses Druckerordners erfolgt nicht.
 
-Buchungsjournal, Filamentbestände und abgeschlossene Aufträge bleiben beim Löschen einer Druckerdatei erhalten. Eine Datei erneut drucken zu können erfordert danach die ursprüngliche Datei auf deinem Rechner oder eine eigene Sicherung. Dateien werden nicht automatisch vor dem Löschen archiviert. Der Reiter bietet keine Upload- oder Druckstartfunktion und keine freie Navigation in beliebige Drucker-Systemverzeichnisse.
+Buchungsjournal, Filamentbestände und abgeschlossene Aufträge bleiben beim Löschen einer Druckerdatei erhalten. Eine Datei erneut drucken zu können erfordert danach die ursprüngliche Datei auf deinem Rechner oder eine eigene Sicherung. Dateien werden nicht automatisch vor dem Löschen archiviert. Der Reiter bietet keine Uploadfunktion und keine freie Navigation in beliebige Drucker-Systemverzeichnisse. Ein ausdrücklich bestätigter Druckstart aus einer geslicten 3MF ist über „Details & Drucken …“ möglich.
 
 ## Kamera und Licht
 
@@ -265,7 +265,7 @@ Die Verzögerung ist **keine temperaturgeführte Abkühlprüfung**. Die Funktion
 
 ### Flusskontrolle: 2 g je Farbe
 
-„Flusskontrolle berücksichtigen · 2 g je Farbe“ ist ein **manueller Verbrauchszuschlag** und startet keine Kalibrierung. Standardmäßig aus. Die Einstellung wird beim Erkennen eines neuen Druckauftrags festgeschrieben; spätere Änderungen gelten erst für weitere Aufträge.
+„Flusskontrolle berücksichtigen · 2 g je Farbe“ ist ein **optionaler Verbrauchszuschlag** und startet keine Kalibrierung. Standardmäßig aus. Die Einstellung wird beim Erkennen eines neuen Druckauftrags festgeschrieben; spätere Änderungen gelten erst für weitere Aufträge.
 
 Technisch bedeutet „je Farbe“: **je Slicer-Filamentposition mit positivem geplantem Verbrauch** einmalig 2 g zusätzlich. Zwei gleichfarbige, separat angelegte Slicer-Positionen können daher jeweils einen Zuschlag erhalten. Die App behauptet keine gemessene Kalibrierungsmenge. Bei einer Aufteilung auf mehrere Rollen wird der Zuschlag mit der Gesamtmenge verteilt und nicht pro Reservespule erneut addiert.
 
@@ -277,7 +277,7 @@ Die Option ausschalten, wenn keine Flusskalibrierung läuft oder deren Verbrauch
 
 ### Automatische Erkennung der Kalibrierung
 
-Die dokumentierte Startanfrage kennt `flow_cali`. Das ist keine hier nachgewiesene, dauerhaft verfügbare Statusbestätigung für einen aus Bambu Studio gestarteten A1-Auftrag. Die App erkennt diesen Startschalter derzeit **nicht automatisch**. Bambu Studio ordnet außerdem die Statusphase 8 der laufenden dynamischen Flusskalibrierung zu. Falls der A1 diese Phase während der Beobachtung meldet, wäre das ein positiver Nachweis einer ausgeführten Kalibrierung. Das Ausbleiben der Meldung beweist keine deaktivierte Kalibrierung: Die App könnte zu spät verbunden gewesen sein oder die Phase nicht erhalten haben. Die Anwendung speichert einen solchen Nachweis bislang nicht dauerhaft pro Auftrag und leitet daraus keinen automatischen 2-g-Zuschlag ab. Ein eingestelltes K-Profil belegt ebenfalls nicht, dass in diesem Druck neu kalibriert wurde. Quelle zur Phase: [Bambu Studio – Statusphasen](https://github.com/bambulab/BambuStudio/blob/master/src/slic3r/GUI/DeviceManager.cpp). Bei einem künftig von der App selbst ausgelösten Start könnte die ausdrücklich gewählte Option gespeichert werden. Quelle: [OpenBambuAPI – project_file](https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md#printproject_file).
+Die dokumentierte Startanfrage kennt `flow_cali`. Das ist keine hier nachgewiesene, dauerhaft verfügbare Statusbestätigung für einen aus Bambu Studio gestarteten A1-Auftrag. Bei einem Start aus unserer Oberfläche wird die gewählte Option dem erkannten Auftrag zugeordnet; ein explizites `flow_cali`-Feld in einer Auftragsrückmeldung wird ebenfalls berücksichtigt. „Angefordert“ bedeutet noch nicht „durchgeführt“. Bambu Studio ordnet außerdem die Statusphase 8 der laufenden dynamischen Flusskalibrierung zu. Wenn der A1 diese Phase während der Beobachtung meldet, wird dies als positiver Nachweis einer laufenden Kalibrierung gespeichert. Das Ausbleiben der Meldung beweist keine deaktivierte Kalibrierung: Die App könnte zu spät verbunden gewesen sein oder die Phase nicht erhalten haben. Die Anwendung speichert eine frisch gemeldete Phase 8 jetzt dauerhaft beim aktiven Auftrag. In den Einstellungen lässt sich der 2-g-Zuschlag auf solche positiv bestätigten Fälle beschränken. Ohne Meldung bleibt die Durchführung unbekannt; in diesem Modus gibt es dann keinen Zuschlag. Ein eingestelltes K-Profil belegt ebenfalls nicht, dass in diesem Druck neu kalibriert wurde. Quelle zur Phase: [Bambu Studio – Statusphasen](https://github.com/bambulab/BambuStudio/blob/master/src/slic3r/GUI/DeviceManager.cpp). Startoption und beobachtete Durchführung werden getrennt dargestellt. Ein gesetztes K-Profil ersetzt keine Durchführungsmeldung. Quelle: [OpenBambuAPI – project_file](https://github.com/Doridian/OpenBambuAPI/blob/main/mqtt.md#printproject_file).
 
 ## Fehlersuche und Grenzen
 
@@ -292,7 +292,7 @@ Die dokumentierte Startanfrage kennt `flow_cali`. Das ist keine hier nachgewiese
 | Sitzung abgelaufen | Seite neu öffnen und Eingabe wiederholen; abgelehntes Formular wurde nicht gespeichert. |
 | Produktvorlage nicht verfügbar | Katalogverbindung prüfen oder Produkt manuell anlegen. |
 
-Die Anwendung ist auf einen Drucker und dessen AMS Lite zugeschnitten. Eine beliebige Mehrdruckersteuerung, automatisches physisches Rollenladen, slicerbezogene Profilkalibrierung, temperaturgeführtes Ausschalten und eine automatische Erkennung der aktivierten Flusskontrolle sind hier nicht implementiert. Zusätzliche lokale Firmwarebefehle durch Developer Mode sind keine automatisch bereits integrierten App-Funktionen.
+Die Anwendung ist auf einen Drucker und dessen AMS Lite zugeschnitten. Eine beliebige Mehrdruckersteuerung, automatisches physisches Rollenladen, slicerbezogene Profilkalibrierung, temperaturgeführtes Ausschalten sind hier nicht implementiert. Zusätzliche lokale Firmwarebefehle durch Developer Mode sind keine automatisch bereits integrierten App-Funktionen.
 
 Private `.env`, Zugänge, Schlüssel, Datenbanken, Logs, Inventarexporte und Backups außerhalb von Git aufbewahren. Vollständige Exporte können eigene Notizen und historische Datensätze enthalten. Installation und Wiederherstellung: [Betrieb](plus-operations.md). Entwicklungs- und Hardwareprüfung: [Deployment und Prüfung](../DEPLOYMENT.md).
 
@@ -301,3 +301,36 @@ Private `.env`, Zugänge, Schlüssel, Datenbanken, Logs, Inventarexporte und Bac
 Oben rechts lässt sich mit „Helles Design“ beziehungsweise „Dunkles Design“ die Darstellung umschalten. Die Auswahl gilt für alle Bereiche und wird in diesem Browser gespeichert. Andere Geräte können unabhängig ein anderes Design verwenden. Falls der Browser das Speichern blockiert, funktioniert der Wechsel auf der aktuellen Seite weiterhin. Ohne gespeicherte Auswahl bleibt das bisherige dunkle Design aktiv. Filamentfarben werden durch den Designwechsel nicht verändert.
 
 ![Helles Design mit Druckerstatus und AMS – ausschließlich Beispieldaten](assets/current/light-overview.png)
+
+## Dateidetails, Druckstart und Bereinigung
+
+### Datei ansehen und erneut drucken
+
+1. Unter **Druckerspeicher** bei einer geslicten 3MF **Details & Drucken …** wählen. Beim ersten Aufruf wird das Archiv im bestätigten Leerlauf im Hintergrund gelesen. Der Fortschritt erscheint im Dialog. Die vollständige Datei bleibt nicht im App-Cache.
+2. Die tatsächlich geslicte Druckplatte wählen. Eine Datei kann nur Platte 3 enthalten; die App ersetzt deren Nummer nicht durch 1. Das Bild gehört zur ausgewählten Platte, soweit es im Archiv vorhanden ist. Dazu erscheinen Modell, Düse, geschätzte Dauer, Filamentbedarf, Objekte und Slicerhinweise.
+3. Jede verwendete Slicer-Filamentposition einem AMS-Schacht zuordnen. Eine eindeutig passende Material-/Farbkombination wird vorgeschlagen. Der Schacht braucht eine gepflegte Bestandsrolle. Eine einzelne externe Rolle ist ebenfalls möglich; gemischter AMS-/Extern-Betrieb wird in diesem Dialog nicht angeboten.
+4. Material-/Farbabweichungen gegebenenfalls bewusst erlauben. Die Auswahl ändert keine AMS-Filamentstammdaten. Für einen regulären Rollenwechsel vorher den AMS-Bereich verwenden.
+5. Druckbett-Nivellierung, dynamische Flusskontrolle, Vibrationskompensation und Zeitraffer bewusst wählen. Standard ist nur Nivellierung. Der Verbrauchszuschlag ist davon eine getrennte Einstellung.
+6. **Druckstart prüfen …** wählen. Die Zusammenfassung lesen, die freie und vorbereitete Druckplatte bestätigen und **Jetzt drucken** betätigen.
+
+Die Bestätigung gilt einmalig und zwei Minuten. Geänderte Auswahl macht sie ungültig. Direkt vor dem Befehl werden Datei, frischer Leerlauf, Düse, Material/Farbe und Bestandsbindungen erneut geprüft. Ein laufender oder ungeklärter Auftrag sperrt den Start. Bei unklarer Rückmeldung den realen Druckerstatus prüfen; die App wiederholt den Start nicht automatisch. Ein vorheriger Versuch sperrt weitere Versuche für zwei Minuten. Erfolg wird erst bei einer neuen passenden PREPARE-/RUNNING-Rückmeldung angezeigt.
+
+Die Modellprüfung nutzt `BAMBU_MODEL` (Standard `Bambu Lab A1`; für A1 mini entsprechend setzen) und die vom Drucker gemeldete Düsengröße. Nicht passende oder unbekannte Daten sperren den Start. Unterstützung ist auf geslicte 3MF-Dateien begrenzt; reine G-Code-Dateien bieten Historie, aber keinen Startdialog mit geprüfter Filamentzuordnung. Es wird nicht neu geslicet.
+
+Dateidetails unterstützen Archive bis 128 MiB und höchstens vier Minuten Transferzeit; XML-/JSON-Konfigurationen sind einzeln auf 2 MiB begrenzt. Bei Druckbeginn während des Lesens wird der Transfer bei der nächsten Leerlaufprüfung gestoppt. Metadaten und kleine Plattenbilder werden getrennt vom Inventar für bis zu 30 Tage zwischengespeichert, höchstens 100 Einträge beziehungsweise 16 MiB. Der Bildcache-Schalter leert weiterhin nur die normalen Modellminiaturen.
+
+![Druckstart mit Druckplatte, Filamentzuordnung, Optionen und Bestätigung – Beispieldaten](assets/current/storage-start.png)
+
+### Historie und gezielte Bereinigung
+
+Der Dateidialog zeigt bis zu 30 passende Aufträge aus den letzten 1.000 Druckaufträgen, mit Zeitpunkt, Status, Abbruchhinweis und gebuchtem Verbrauch. Die Verbindung erfolgt über den normalisierten Dateinamen. Gleichnamig ersetzte Dateien können historisch nicht eindeutig unterschieden werden. Das Journal bleibt die verbindliche Buchungshistorie.
+
+Über **Ansicht** zwischen Liste und Kacheln wechseln; der Browser merkt sich die Wahl. Suche, Mindestgröße und ungefähres Dateialter lassen sich kombinieren. Fehlt dem Druckerdatum das Jahr, wird es geschätzt. Die Anzeige nennt die Gesamtgröße im Filter und die Summe der ausgewählten Dateien. **Gefilterte Dateien auswählen** lässt geschützte Dateien aus. Erst die anschließende Löschübersicht mit eigener Bestätigung entfernt genau die geprüfte Auswahl. Es gibt keine automatische Bereinigung.
+
+### Flusskontrolle: Nachweis statt Vermutung
+
+Im Journal werden positive Durchführungsmeldung, explizite Startanforderung und unbekannter Zustand unterschieden. Fehlende Phase 8 beweist keine ausgeschaltete Kalibrierung. Ältere Aufträge werden nicht rückwirkend als erkannt markiert und nicht neu gebucht.
+
+Unter Einstellungen gilt für neue Aufträge wahlweise die bisherige **Pauschale** oder **nur bei gemeldeter Flusskontrolle (Stufe 8)**. Auch im zweiten Modus bleiben die 2 g je positiver verwendeter Filamentposition eine Schätzung, keine vom Drucker gemessene Grammmenge. Bei ausgeschaltetem Verbrauchszuschlag wird weiterhin nichts zusätzlich gebucht. Bereits laufende Aufträge behalten ihre festgeschriebene Regel.
+
+Beim MQTT-Wiederanlauf werden leere AMS-Platzhaltermeldungen in der ersten Minute nicht als Rollenentnahme gewertet. Vollständige Angaben können sofort angezeigt werden; bleibt ein Schacht nach der Startphase tatsächlich leer, wird dessen Zuordnung bei einer folgenden Rückmeldung weiterhin gelöst.

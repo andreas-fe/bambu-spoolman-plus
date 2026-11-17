@@ -190,7 +190,7 @@ class Store:
                                ('mapping_source', "TEXT NOT NULL DEFAULT ''"),
                                ('progress', 'REAL NOT NULL DEFAULT 0'), ('observed_slots_json', "TEXT NOT NULL DEFAULT '[]'"),
                                ('spools_snapshot_json', 'TEXT'), ('cancelled', 'INTEGER NOT NULL DEFAULT 0'),
-                               ('estimated', 'INTEGER NOT NULL DEFAULT 0'), ('estimate_reason', "TEXT NOT NULL DEFAULT ''")]:
+                               ('estimated', 'INTEGER NOT NULL DEFAULT 0'), ('estimate_reason', "TEXT NOT NULL DEFAULT ''"), ('flow_observed','INTEGER NOT NULL DEFAULT 0'), ('flow_requested','INTEGER'), ('flow_mode',"TEXT NOT NULL DEFAULT 'always'")]:
                 if name not in columns:
                     con.execute(f'ALTER TABLE jobs ADD COLUMN {name} {kind}')
             con.execute("UPDATE jobs SET dry_run=1 WHERE dry_run IS NULL AND "
@@ -240,6 +240,8 @@ class Store:
                 option = con.execute("SELECT value_json FROM settings WHERE key='flow_calibration_allowance'").fetchone()
                 con.execute("INSERT INTO settings(key,value_json,updated_at) VALUES (?,?,?)",
                             ('flow_allowance_job:'+job_id, option['value_json'] if option else 'false', now))
+                mode=con.execute("SELECT value_json FROM settings WHERE key='flow_allowance_mode'").fetchone()
+                con.execute("UPDATE jobs SET flow_mode=? WHERE id=?", ('observed' if mode and json.loads(mode['value_json'])=='observed' else 'always',job_id))
                 con.execute("UPDATE runtime SET value=? WHERE key='active_job_id'", (job_id,))
                 log(f"Neuer Druckauftrag: {filename or subtask_name or job_id}")
             else:
@@ -870,7 +872,7 @@ def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, sto
     for filament_id, original in sorted(weights.items()):
         total = round(original * factor * 100)
         if total <= 0: continue
-        if job.get('flow_calibration_allowance'):
+        if job.get('flow_calibration_allowance') and (job.get('flow_mode','always')!='observed' or job.get('flow_observed')):
             total += 200
             reasons.append('Flusskontrolle: pauschal 2 g je verwendeter Filamentfarbe zusätzlich (Schätzung)')
         filament = filaments.get(str(filament_id), {})
@@ -1042,6 +1044,7 @@ printer_status = telemetry.status
 mqtt_client: mqtt.Client | None = None
 seq_counter = 1
 sequence_lock = threading.Lock()
+ams_boot_guard_until = 0.0
 
 def next_sequence():
     global seq_counter
@@ -1050,8 +1053,10 @@ def next_sequence():
         return str(seq_counter)
 
 def on_connect(client, userdata, flags, reason_code, properties=None):
+    global ams_boot_guard_until
     code = getattr(reason_code, "value", reason_code)
     if code == 0:
+        ams_boot_guard_until=time.monotonic()+60
         log("MQTT-Verbindung zum Bambu-Drucker hergestellt.")
         client.subscribe(f"device/{SERIAL}/report", qos=0)
         send_pushall(client)
@@ -1076,6 +1081,11 @@ def record_ams_changes():
         previous = json.loads(row['value']) if row and row['value'] else {}
         signatures = {str(slot): [bool(tray.get('available')), str(tray.get('material') or '').upper(), normalized_color(tray.get('color'))]
                       for slot,tray in ams_state.items() if tray.get('known')}
+        # During printer/AMS startup an id-only tray report is a placeholder,
+        # not proof that the physical spool was removed. Preserve the baseline
+        # until complete data returns; a genuine empty slot is handled later.
+        if time.monotonic()<ams_boot_guard_until:
+            signatures={slot:sig for slot,sig in signatures.items() if sig[0]}
         if all(previous.get(slot) == signature for slot,signature in signatures.items()):
             return
         db.execute('BEGIN IMMEDIATE')
@@ -1086,8 +1096,9 @@ def record_ams_changes():
         for slot, tray in ams_state.items():
             if not tray.get('known'):
                 continue
-            signature = [bool(tray.get('available')), str(tray.get('material') or '').upper(), normalized_color(tray.get('color'))]
             name = str(slot)
+            if name not in signatures:continue
+            signature=signatures[name]
             if name in previous and previous[name] != signature:
                 db.execute('UPDATE ams_assignments SET released_at=? WHERE printer_id=? AND slot_id=? AND released_at IS NULL', (store.now(), SERIAL, name))
                 changed.append(slot)
@@ -1105,6 +1116,7 @@ def on_message(client, userdata, msg):
         p = data.get("print") or {}
         if not p: return
 
+        started_to_enqueue=None
         state, filename, subtask, ams_map, ams_map2 = telemetry.update(p, normalized_color)
         record_ams_changes()
 
@@ -1117,12 +1129,31 @@ def on_message(client, userdata, msg):
                 if 'stg_cur' not in p: printer_status['stage'] = None
                 if 'mc_remaining_time' not in p:
                     printer_status.update(remaining_minutes=None, remaining_seen_at=0)
-                enqueue_job(started)
+                started_to_enqueue=started
         # Mapping and file metadata can arrive in MQTT delta messages without a state.
         active_id = store.active_job_id()
         if active_id:
             fields = {}
             job = store.get_job(active_id)
+            if job['state'] in ('RUNNING','PREPARING') and str(p.get('stg_cur','')).strip()=='8':
+                fields['flow_observed']=1
+            if job['state'] in ('RUNNING','PREPARING') and job.get('flow_requested') is None:
+                with store.connection() as db:
+                    pending=db.execute("SELECT value FROM runtime WHERE key='storage-start-pending'").fetchone()
+                pending=json.loads(pending['value']) if pending and pending['value'] else {}
+                if 0<=time.time()-pending.get('sent_at',0)<120 and storage_name(pending.get('filename')) in (storage_name(filename),storage_name(subtask)):
+                    fields['flow_requested']=int(bool(pending.get('flow_cali')))
+                    reply=printer_status.get('project_file_reply') or {}
+                    if reply.get('accepted') and reply.get('sequence_id')==pending.get('sequence'):
+                        if pending.get('weights') and not job.get('weights_json'):
+                            fields['weights_json']=json.dumps(pending['weights'])
+                            fields['filaments_json']=json.dumps(pending.get('filaments',{}))
+                            fields['plate_index']=pending.get('plate_index')
+                        if not job.get('ams_mapping_json') and pending.get('mapping'):
+                            fields['ams_mapping_json']=json.dumps(pending['mapping'])
+                            fields['mapping_source']='USER'
+            if job['state'] in ('RUNNING','PREPARING') and type(p.get('flow_cali')) is bool:
+                fields['flow_requested']=int(p['flow_cali'])
             fields['progress'] = max(float(job.get('progress') or 0), printer_status['progress'])
             observed = json.loads(job.get('observed_slots_json') or '[]')
             slot = printer_status['active_slot']
@@ -1144,6 +1175,7 @@ def on_message(client, userdata, msg):
             plate = re.search(r'plate_(\d+)\.gcode', str(p.get('param', '')))
             if plate: fields['plate_index'] = int(plate.group(1))
             if fields: store.update_job(active_id, **fields)
+        if started_to_enqueue:enqueue_job(started_to_enqueue)
         if state == "FINISH":
             j_id = store.finish_active_job(filename, subtask, ams_map, ams_map2)
             if j_id: enqueue_job(j_id)
@@ -1258,7 +1290,68 @@ def storage_idle():
         return not db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING')").fetchone()
 
 
-printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP)
+def storage_context():
+    if DRY_RUN or not mqtt_client or not mqtt_client.is_connected() or not storage_idle():
+        raise ValueError('Druckstart erfordert Live-Betrieb und bestätigten frischen Leerlauf.')
+    if not printer_status.get('nozzle_diameter'):refresh_calibration_profiles()
+    mapping=load_mapping();stock={str(s['id']):s for s in fetch_spoolman_spools()};slots=[]
+    for key in ('0','1','2','3','external'):
+        spool=stock.get(str(mapping.get(key)),{});tray=ams_state.get(int(key),{}) if key!='external' else {}
+        label='Externe Rolle' if key=='external' else 'AMS Slot '+str(int(key)+1)
+        fil=spool.get('filament') or {}
+        slots.append(dict(slot=key,label=label,available=bool(spool) if key=='external' else bool(tray.get('known') and tray.get('available') and time.time()-tray.get('seen_at',0)<=120),material=spool.get('material','') if key=='external' else tray.get('material',''),color=spool.get('clean_color','') if key=='external' else tray.get('color',''),spool_id=spool.get('id'),spool_material=spool.get('material') or fil.get('material',''),spool_color=spool.get('clean_color',''),spool_name=fil.get('name','Keine Bestandsrolle')))
+    return dict(model=os.getenv('BAMBU_MODEL','Bambu Lab A1'),nozzle=printer_status.get('nozzle_diameter'),slots=slots)
+
+
+def storage_prepare(entry,metadata,choice):
+    from bridge.print_start import prepare_start
+    if storage_blocked(entry['name']):raise ValueError('Datei wird noch für einen offenen Auftrag benötigt.')
+    return prepare_start(entry,metadata,choice,storage_context())
+
+
+def storage_start(review):
+    if not ams_write_lock.acquire(False):raise ValueError('AMS-Änderung läuft. Druckstart neu prüfen.')
+    try:
+        result=storage_prepare(review['entry'],review['metadata'],review['choice'])
+        if result['fingerprint']!=review['result']['fingerprint']:raise ValueError('Druckerangaben oder Bestandszuordnung geändert. Start neu prüfen.')
+        command=result['payload'];command['sequence_id']=next_sequence()
+        selected_plate=next((p for p in review['metadata'].get('plates',[]) if p['index']==review['choice'].get('plate')),None)
+        pending=dict(filename=review['entry']['name'],sent_at=time.time(),flow_cali=command['flow_cali'],sequence=command['sequence_id'])
+        if selected_plate:
+            filaments=selected_plate['filaments']
+            if all(f.get('grams') is not None and f['grams']>0 for f in filaments):
+                pending.update(weights={str(f['id']):round(f['grams'],2) for f in filaments},filaments={str(f['id']):dict(material=f['material'],color=f['color']) for f in filaments},plate_index=selected_plate['index'])
+            mapping=list(command.get('ams_mapping') or [-1]*max(f['id'] for f in filaments))
+            if not command.get('use_ams'):
+                for f in filaments:mapping[f['id']-1]=254
+            pending['mapping']=mapping
+        with store.connection() as db:
+            row=db.execute("SELECT value FROM runtime WHERE key='storage-start-pending'").fetchone()
+            previous=json.loads(row['value']) if row and row['value'] else {}
+            if time.time()-previous.get('sent_at',0)<120:raise ValueError('Vorheriger Startversuch noch ungeklärt. Druckerstatus prüfen und warten.')
+            db.execute("INSERT INTO runtime(key,value) VALUES ('storage-start-pending',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(json.dumps(pending),))
+        sequence=telemetry.state_sequence
+        client=mqtt_client
+        if client is None or not client.is_connected() or client.publish(f'device/{SERIAL}/request',json.dumps({'print':command}),qos=0).rc!=mqtt.MQTT_ERR_SUCCESS:raise ValueError('Druckstart nicht gesendet. Druckerstatus prüfen und Start später neu vorbereiten.')
+        log('Druckstart aus Druckerspeicher angefordert; warte auf neue Druckerrückmeldung.')
+        deadline=time.monotonic()+12
+        while time.monotonic()<deadline:
+            reply=telemetry.status.get('project_file_reply') or {}
+            if str(reply.get('sequence_id'))==command['sequence_id'] and reply.get('failed'):raise ValueError('Drucker hat den Start abgelehnt. Gerätemeldung prüfen und neu vorbereiten.')
+            if telemetry.state_sequence>sequence and printer_status['state'] in ('PREPARE','RUNNING') and storage_name(printer_status.get('subtask_name'))==storage_name(review['entry']['name']):
+                return dict(message='Drucker bestätigt die Vorbereitung des ausgewählten Druckauftrags.',confirmed=True)
+            time.sleep(.2)
+        return dict(message='Startbefehl gesendet, Druckbeginn noch nicht eindeutig bestätigt. Druckerstatus prüfen; nicht erneut starten.',confirmed=False)
+    finally:ams_write_lock.release()
+
+
+def storage_history(name):
+    with store.connection() as db:
+        rows=db.execute('SELECT j.id,j.filename,j.subtask_name,j.state,j.created_at,j.updated_at,j.cancelled,COALESCE(SUM(CASE WHEN d.status=\'DONE\' THEN d.grams ELSE 0 END),0) grams FROM jobs j LEFT JOIN deductions d ON d.job_id=j.id WHERE j.kind=\'PRINT\' GROUP BY j.id ORDER BY j.created_at DESC LIMIT 1000').fetchall()
+    return [dict(r) for r in rows if storage_name(name) in (storage_name(r['filename']),storage_name(r['subtask_name']))][:30]
+
+
+printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history))
 
 
 register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,
@@ -1778,6 +1871,12 @@ def journal_page(before=None):
     rows=store.list_deductions(11,before=before)
     more=len(rows)>10
     entries=rows[:10]
+    with store.connection() as db:
+        for row in entries:
+            evidence=db.execute('SELECT kind,flow_observed,flow_requested,flow_mode FROM jobs WHERE id=?',(row.get('job_id'),)).fetchone()
+            if evidence and evidence['kind']=='PRINT' and row.get('entry_type') not in ('adjustment','closed'):
+                label='Flusskontrolle: Durchführung vom Drucker gemeldet' if evidence['flow_observed'] else 'Flusskontrolle: angefordert, Durchführung nicht bestätigt' if evidence['flow_requested']==1 else 'Flusskontrolle: nicht angefordert' if evidence['flow_requested']==0 else 'Flusskontrolle: Durchführung unbekannt'
+                row['detail']=(row.get('detail') or '')+' · '+label
     cursor=URLSafeTimedSerializer(app.secret_key,salt='journal-cursor-v1').dumps(entries[-1]['journal_key']) if more and entries else None
     return dict(entries=entries,has_more=more,next_cursor=cursor)
 
@@ -1935,14 +2034,15 @@ def app_settings():
         auto_match = request.form.get('auto_match') == 'on'
         with inventory_connection(DB_PATH) as db:
             db.execute('BEGIN IMMEDIATE')
-            for key, value in [('dry_run', dry_run), ('auto_match_filaments', auto_match), ('flow_calibration_allowance', request.form.get('flow_allowance') == 'on')]:
+            for key, value in [('dry_run', dry_run), ('auto_match_filaments', auto_match), ('flow_calibration_allowance', request.form.get('flow_allowance') == 'on'), ('flow_allowance_mode', 'observed' if request.form.get('flow_mode')=='observed' else 'always')]:
                 db.execute('INSERT INTO settings(key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at', (key, json.dumps(value), store.now()))
             db.commit()
         DRY_RUN, AUTO_MATCH_FILAMENTS = dry_run, auto_match
         return redirect('/settings?saved=1')
     with inventory_connection(DB_PATH) as db:
         option = db.execute("SELECT value_json FROM settings WHERE key='flow_calibration_allowance'").fetchone()
-    return render_ui(SETTINGS_PAGE, flow_allowance=bool(option and json.loads(option['value_json']) is True), active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
+        mode=db.execute("SELECT value_json FROM settings WHERE key='flow_allowance_mode'").fetchone()
+    return render_ui(SETTINGS_PAGE, flow_mode=json.loads(mode['value_json']) if mode else 'always', flow_allowance=bool(option and json.loads(option['value_json']) is True), active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
 
 
 def main():

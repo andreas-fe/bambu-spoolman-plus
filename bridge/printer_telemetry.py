@@ -52,6 +52,8 @@ class PrinterTelemetry:
                     self.status.update(calibration_profiles=parse_profiles(payload),calibration_profiles_seen_at=time.time())
                     self._profile_reply = str(payload.get('sequence_id'))
                     self._state_changed.notify_all()
+        if payload.get('command')=='project_file' and payload.get('sequence_id') is not None:
+            self.status['project_file_reply']=dict(sequence_id=str(payload['sequence_id']),accepted=str(payload.get('result','')).lower() in ('success','ok'),failed=str(payload.get('result','')).lower() in ('fail','failed','error') or str(payload.get('err_code',0)) not in ('0','None',''),seen_at=time.time())
         lights = payload.get('lights_report')
         for light in lights if isinstance(lights, list) else []:
             if isinstance(light, dict) and light.get('node') == 'chamber_light' and light.get('mode') in ('on', 'off'):

@@ -115,3 +115,54 @@ def test_large_archive_preview_stops_before_gcode_and_rechecks_idle():
     r=client.post('/storage/preview',data={'file':entry['token']})
     assert r.status_code==200 and r.mimetype=='image/png'
     assert sum(reads)<=65536 and all(s.closed for s in streams) and ftp.closed and not ftp.deleted
+
+
+def test_storage_metadata_real_plate_indices_and_bounds():
+    from bridge.storage_metadata import inspect_archive
+    data=io.BytesIO()
+    with zipfile.ZipFile(data,'w') as z:
+        z.writestr('Metadata/plate_3.gcode','G1 X0')
+        z.writestr('Metadata/slice_info.config','<config><plate><metadata key="index" value="3"/><metadata key="prediction" value="120"/><filament id="2" type="PLA" color="#FFFFFF" used_g="9.61"/></plate></config>')
+        z.writestr('Metadata/project_settings.config','{"printer_model":"Bambu Lab A1"}')
+    result=inspect_archive(data)
+    assert result['plates'][0]['index']==3 and result['plates'][0]['filaments'][0]['id']==2
+    assert result['plates'][0]['seconds']==120
+    bad=io.BytesIO()
+    with zipfile.ZipFile(bad,'w') as z:z.writestr('Metadata/slice_info.config','<!DOCTYPE a><config/>')
+    with pytest.raises(ValueError):inspect_archive(bad)
+
+
+def test_background_details_and_single_use_review_guard_file_change():
+    import json,time
+    from bridge.print_start import prepare_start
+    from tests.test_print_start import inputs
+    _,metadata,choice,ctx=inputs()
+    data=io.BytesIO()
+    with zipfile.ZipFile(data,'w') as z:
+        z.writestr('Metadata/plate_3.gcode','G1 X0')
+        z.writestr('Metadata/slice_info.config','<config><plate><metadata key="index" value="3"/><metadata key="nozzle_diameters" value="0.4"/><filament id="2" type="PLA" color="#FFFFFF" used_g="2"/></plate></config>')
+        z.writestr('Metadata/project_settings.config','{"printer_model":"Bambu Lab A1","filament_type":["PLA","PLA"]}')
+    data=data.getvalue();ftp=FTP();ftp.size=len(data);transfers=[];starts=[]
+    def transfer(command,write,blocksize=8192):transfers.append(command);write(data)
+    ftp.retrbinary=transfer
+    handlers=dict(context=lambda:ctx,history=lambda n:[dict(state='DONE')],prepare=lambda e,m,c:prepare_start(e,m,c,ctx),start=lambda r:(starts.append(r),dict(confirmed=True))[1])
+    app=Flask(__name__);app.secret_key='actions-test'
+    register_storage(app,lambda:ftp,lambda n:None,lambda:True,lambda s:None,handlers=handlers)
+    c=app.test_client();entry=c.get('/api/storage?folder=/cache').json['files'][0]
+    r=c.post('/storage/details',data=dict(file=entry['token']));assert r.status_code==202
+    for _ in range(100):
+        d=c.get('/api/storage/details',query_string=dict(ticket=r.json['ticket'])).json
+        if d['state']!='loading':break
+        time.sleep(.01)
+    assert d['state']=='done' and d['metadata']['plates'][0]['index']==3
+    assert c.post('/storage/details',data=dict(file=entry['token'])).json['state']=='done' and len(transfers)==1
+    assert c.get('/api/storage/history',query_string=dict(file=entry['token'])).json['entries'][0]['state']=='DONE'
+    def review():
+        return c.post('/storage/start-review',data=dict(file=entry['token'],choice=json.dumps(choice))).json['token']
+    token=review()
+    assert c.post('/storage/start',data=dict(review=token)).status_code==400 and not starts
+    ftp.size+=1
+    assert c.post('/storage/start',data=dict(review=token,confirm='start-print',bed_clear='yes')).status_code==409 and not starts
+    ftp.size-=1;token=review()
+    assert c.post('/storage/start',data=dict(review=token,confirm='start-print',bed_clear='yes')).json['confirmed']
+    assert c.post('/storage/start',data=dict(review=token,confirm='start-print',bed_clear='yes')).status_code==409 and len(starts)==1

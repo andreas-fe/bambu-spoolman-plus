@@ -15,8 +15,8 @@ Lokale Docker-Anwendung für Bambu Lab A1/A1 mini und AMS Lite: Filamentbestand 
 - **Wiegekorrektur:** Gesamtgewicht eingeben; die App zieht das bekannte Leerspulengewicht ab und setzt den Restbestand. Auch unbekannte Bestände können so erfasst werden.
 - **Katalogvorlagen:** Optionale SpoolmanDB-Suche für neue Produkte. Vorlagen prüfen und übernehmen; keine automatische Änderung bestehender Produkte oder Slicer-Profile.
 - **Verbrauch und Journal:** Slicer-Grammwerte der gedruckten Platte, eingefrorene Bestands-/Zuordnungssnapshots, Abbruchschätzungen, manuelle Korrekturen und nachvollziehbare Wiegedaten mit Datum und Uhrzeit. Einklappbares Journal mit zehn Einträgen und schrittweisem Nachladen.
-- **Flusskontrolle:** Optional 2 g Zusatzverbrauch pro positiver Slicer-Filamentposition, einmalig je Auftrag und als Schätzung gekennzeichnet. Die Option aktiviert oder erkennt keine Druckerkalibrierung.
-- **Druckerspeicher:** Eigener Reiter mit Suche, Dateigröße, Datum, zwischengespeicherten Modellminiaturen, optionalem sichtbaren Nachladen und bestätigter Mehrfachlöschung. Laufende/offene Druckaufträge bleiben geschützt; keine automatische Bereinigung.
+- **Flusskontrolle:** Optional 2 g Zusatzverbrauch pro positiver Slicer-Filamentposition, einmalig je Auftrag und als Schätzung gekennzeichnet. Die Option startet keine Kalibrierung. Frisch gemeldete Kalibrierungsphasen werden pro Auftrag gespeichert; der Zuschlag ist wahlweise pauschal oder nur bei positivem Nachweis möglich.
+- **Druckerspeicher:** Eigener Reiter mit Listen-/Kachelansicht, Alters-/Größenfiltern, Modellminiaturen, Dateidetails mit Druckplatten und Historie, geprüftem 3MF-Druckstart und bestätigter Mehrfachlöschung samt Platzberechnung. Laufende/offene Druckaufträge bleiben geschützt; keine automatische Bereinigung.
 - **Kamera und Licht:** Livebild bei Bedarf, Lichtschalter oberhalb der Bildfläche und neue Gerätezustandsbestätigung vor Erfolgsmeldung.
 - **Tapo P110:** Ein-/Ausschalten, Live-Leistung, Tages-/Monatsenergie und Laufzeit. Ausschalten verlangt bestätigten frischen Druckerleerlauf; eingeschaltetes Licht blockiert nicht.
 - **Auftragsbezogene Abschaltung:** Optional nach erfolgreichem Ende, abgeschlossener Buchung und 1–3 Minuten Wartezeit; standardmäßig aus. Keine temperaturgeführte Abkühlprüfung.
@@ -88,7 +88,7 @@ Nach FINISH werden die Grammwerte der ausgewählten Platte gebucht. Bei Abbruch 
 
 ## Validierung und bekannte Grenzen
 
-Stand 16. November 2026: **192 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
+Stand 16. November 2026: **211 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
 
 Am Referenzsystem wurden Licht, manuelles Schalten und ein tatsächlicher AMS-Farbwechsel im Leerlauf geprüft; ursprüngliche Farbe und Bestandsbindung wurden danach wiederhergestellt. Ein echter Farbwechsel während eines laufenden Drucks nach Modusumstellung sowie ein vollständiger automatischer Abschaltzyklus der neuen Funktion sind noch nicht hardwarebestätigt. Das ist kein Freigabenachweis für andere Modelle oder Firmwarestände.
 

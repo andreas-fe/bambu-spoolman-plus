@@ -1,5 +1,13 @@
 # Änderungen
 
+## 2026-11-16 — Druckstart, Dateidetails und Flusserkennung
+
+- Geprüfter 3MF-Druckstart mit tatsächlicher Druckplatte, expliziter AMS-/Extern-Zuordnung, Optionen und Bestätigung der freien Druckplatte. Einmalige kurze Startprüfung, erneute Datei-/Zustandsprüfung, Fingerabdruck und Sperre bei unklarem Start; keine automatischen Wiederholungen.
+- Hintergrund-Dateidetails mit Dauer, Bedarf, Modell/Düse, Objekten, Hinweisen und plattenspezifischem Bild; begrenzter persistenter Metadatencache. Dateibezogene Druck-/Verbrauchshistorie, Listen-/Kachelansicht, Alters-/Größenfilter und Platzberechnung für bewusst ausgewählte Löschungen.
+- Frisch gemeldete dynamische Flusskalibrierung wird dauerhaft je Auftrag erfasst und im Journal von bloßer Anforderung beziehungsweise unbekanntem Zustand unterschieden. Zuschlag wahlweise pauschal oder nur bei positivem Nachweis; Regel bleibt pro Auftrag eingefroren. Keine rückwirkende Umbuchung.
+- MQTT-Wiederanlauf schützt Bestandsbindungen eine Minute lang vor vorübergehend leeren AMS-Startmeldungen. Vollständige Material-/Farbänderungen und später bestätigte Leerbelegung bleiben wirksam.
+- 211 Tests lokal und im NAS-Container bestanden; Browserprüfung mit simuliertem Druckstart, Zuordnung, Plattenwahl, Optionsänderungen, Einmalbestätigung, Historie, Filtern, Kachelpräferenz und Mobilansicht. Echten Druckstart nicht zu Testzwecken ausgelöst.
+
 ## 2026-11-16 — Große 3MF-Vorschauen und umschaltbares Design
 
 - Vorschaubilder werden direkt während des Lesens der ZIP-Einträge erkannt. Nach dem Bild und dessen erfolgreicher Prüfsummenprüfung wird der Transfer beendet; der nachfolgende G-Code muss nicht heruntergeladen werden. Keine REST-Unterstützung am Drucker erforderlich.

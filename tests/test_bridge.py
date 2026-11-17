@@ -1445,3 +1445,70 @@ def test_closed_job_disables_auto_power(bridge):
     complete_auto_job(bridge,job,state='CLOSED_NO_USAGE')
     auto.poll()
     assert not auto.status()['enabled'] and not calls
+
+
+def test_observed_flow_mode_is_frozen_and_positive_stage_persists(bridge,monkeypatch):
+    b=bridge
+    with b.store.connection() as db:
+        db.execute("INSERT INTO settings(key,value_json,updated_at) VALUES ('flow_allowance_mode','\"observed\"','test')")
+    monkeypatch.setattr(b,'enqueue_job',lambda x:None)
+    message(b,dict(gcode_state='RUNNING',gcode_file='flow.3mf',subtask_name='flow',stg_cur=8))
+    job=b.store.get_job(b.store.active_job_id());assert job['flow_mode']=='observed' and job['flow_observed']==1
+    message(b,dict(stg_cur=0));assert b.store.get_job(job['id'])['flow_observed']==1
+    base=dict(flow_calibration_allowance=True,flow_mode='observed',ams_mapping_json='[0]',mapping_source='USER')
+    stock={'10':dict(remaining_weight=100)}
+    a,_,_=b.plan_consumption(base,{1:10},{},{'0':'10'},stock)
+    z,_,_=b.plan_consumption(dict(base,flow_observed=1),{1:10},{},{'0':'10'},stock)
+    assert a[0]['grams']==10 and z[0]['grams']==12
+
+
+def test_storage_start_uses_qos_zero_fresh_state_and_blocks_repeated_attempt(bridge,monkeypatch):
+    b=bridge;published=[]
+    result=dict(fingerprint='same',payload=dict(command='project_file',flow_cali=True))
+    monkeypatch.setattr(b,'storage_prepare',lambda *a:dict(result,payload=dict(result['payload'])))
+    def publish(topic,payload,qos):
+        published.append((json.loads(payload),qos))
+        b.telemetry.update(dict(gcode_state='PREPARE',subtask_name='test.3mf'),b.normalized_color)
+        return SimpleNamespace(rc=0)
+    b.mqtt_client=SimpleNamespace(is_connected=lambda:True,publish=publish)
+    review=dict(entry=dict(name='test.3mf'),metadata={},choice={},result=result)
+    assert b.storage_start(review)['confirmed']
+    assert len(published)==1 and published[0][1]==0 and int(published[0][0]['print']['sequence_id'])>0
+    with pytest.raises(ValueError):b.storage_start(review)
+    assert len(published)==1
+
+
+def test_flow_evidence_survives_restart_and_is_visible_in_journal(bridge,monkeypatch):
+    b=bridge;b.DRY_RUN=False
+    job=finished_job(b,{1:3})
+    b.store.update_job(job,flow_observed=1)
+    monkeypatch.setattr(b,'send_spoolman_deduction',Mock(return_value=('DONE','HTTP 200')))
+    b.process_job(job)
+    assert b.Store(b.DB_PATH).get_job(job)['flow_observed']==1
+    rows=[r for r in b.journal_page()['entries'] if r['job_id']==job]
+    assert rows and all('Durchführung vom Drucker gemeldet' in r['detail'] for r in rows)
+
+
+def test_app_start_seeds_confirmed_plate_metadata_before_worker(bridge,monkeypatch):
+    b=bridge;seen=[]
+    pending=dict(filename='prepared.3mf',sent_at=b.time.time(),sequence='77',flow_cali=True,weights={'2':3.5},filaments={'2':dict(material='PLA',color='#FFFFFF')},plate_index=3,mapping=[-1,1])
+    with b.store.connection() as db:db.execute("INSERT INTO runtime(key,value) VALUES ('storage-start-pending',?)",(json.dumps(pending),))
+    message(b,dict(command='project_file',sequence_id='77',result='success'))
+    monkeypatch.setattr(b,'enqueue_job',lambda jid:seen.append(b.store.get_job(jid)))
+    message(b,dict(gcode_state='PREPARE',gcode_file='prepared.3mf',subtask_name='prepared.3mf'))
+    assert seen and json.loads(seen[0]['weights_json'])=={'2':3.5} and seen[0]['plate_index']==3
+    assert json.loads(seen[0]['ams_mapping_json'])==[-1,1] and seen[0]['flow_requested']==1
+
+
+def test_startup_empty_trays_preserve_roles_until_full_ams_report(bridge):
+    b=bridge;enable_internal(b)
+    b.ams_state={0:dict(known=True,available=True,material='PLA',color='#FFFFFF')}
+    b.save_mapping({'0':'1'});b.record_ams_changes()
+    b.ams_boot_guard_until=b.time.monotonic()+60
+    b.ams_state[0].update(available=False)
+    b.record_ams_changes();assert b.load_mapping()['0']=='1'
+    b.ams_state[0].update(available=True)
+    b.record_ams_changes();assert b.load_mapping()['0']=='1'
+    b.ams_boot_guard_until=0
+    b.ams_state[0].update(available=False)
+    b.record_ams_changes();assert b.load_mapping()['0'] is None
