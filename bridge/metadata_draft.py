@@ -5,6 +5,7 @@ import queue
 import re
 import threading
 from .archive_preview import streamed_entries
+from .storage_metadata import plate_settings,describe_plate
 
 
 class DraftCollector:
@@ -34,7 +35,7 @@ class DraftCollector:
             if self.pending:
                 data,self.pending=self.pending[:size],self.pending[size:];return data
             return self.receive(size)
-        def wanted(name):return name=='Metadata/project_settings.config' or bool(re.fullmatch(r'Metadata/plate_\d+(?:_small)?\.(?:json|png)',name))
+        def wanted(name):return name in ('Metadata/project_settings.config','Metadata/model_settings.config') or bool(re.fullmatch(r'Metadata/plate_\d+(?:_small)?\.(?:json|png)',name))
         try:
             for name,data in streamed_entries(receive,select=wanted,stop_before=lambda n:bool(re.fullmatch(r'Metadata/plate_\d+\.gcode',n))):
                 if data is not None:values[name]=data;continue
@@ -47,6 +48,6 @@ class DraftCollector:
                 preview=values.get(f'Metadata/plate_{index}_small.png') or values.get(f'Metadata/plate_{index}.png')
                 image='data:image/png;base64,'+base64.b64encode(preview).decode() if preview and preview.startswith(b'\x89PNG\r\n\x1a\n') and len(preview)<=256*1024 else None
                 nozzles=project.get('nozzle_diameter') or []
-                self.publish(dict(model=project['printer_model'],filament_count=len(types),draft=True,plates=[dict(index=index,seconds=None,grams=None,nozzle=str(nozzles[0]) if nozzles else '',preview=image,filaments=[dict(id=i+1,material=types[i],color=colors[i],grams=None) for i in ids],objects=[str(o.get('name','')) for o in info.get('bbox_objects',[]) if isinstance(o,dict)],warnings=[])]))
+                self.publish(dict(model=project['printer_model'],filament_count=len(types),draft=True,plates=[dict(**describe_plate(index,plate_settings(values.get('Metadata/model_settings.config')),project),index=index,seconds=None,grams=None,nozzle=str(nozzles[0]) if nozzles else '',preview=image,filaments=[dict(id=i+1,material=types[i],color=colors[i],grams=None) for i in ids],objects=[str(o.get('name','')) for o in info.get('bbox_objects',[]) if isinstance(o,dict)],warnings=[])]))
         except Exception:pass  # Full validated inspection remains the fallback.
         finally:self.finished.set()

@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-17 — Eindeutige Modellplatten und Druckbettoberflächen
+
+- Schließen bleibt auch bei sehr langen Dateinamen und in der Mobilansicht oben rechts; Dateititel darf umbrechen.
+- Modellplattennummer und optionaler Bambu-Studio-Plattenname werden getrennt von der Druckbettoberfläche angezeigt. Oberflächenwerte stammen aus `curr_bed_type` beziehungsweise der platteneigenen `bed_type`-Einstellung; bekannte Werte erhalten die Bambu-Bezeichnungen einschließlich Cool Plate SuperTack. Unbekannte Werte bleiben lesbar, fehlende Werte werden nicht geraten.
+- Oberflächenhinweis bereits in vorläufigen Dateidaten, falls vorhanden, und in der Startbestätigung. Die Anzeige beschreibt die gespeicherte Datei und erkennt keine physische Platte; Startbefehl und geslicte Datei bleiben unverändert. Ältere Metadaten-Caches werden beim nächsten Öffnen einmal neu gelesen.
+- 225 Tests lokal und im NAS-Container sowie Browserprüfung für lange Titel, Desktop/Mobilansicht, Modellplattennamen und Oberflächenanzeige erfolgreich. Nach gesicherter Aktivierung am NAS mit einer echten 3MF einschließlich Cool Plate SuperTack und anschließendem Cachetreffer bestätigt; Bestände, AMS-Bindungen und Journal unverändert.
+
 ## 2026-11-17 — Abbrechbare Dateiprüfung und sichtbare Drucksteuerung
 
 - Schließen, Escape und Seitenwechsel brechen laufende Detaildownloads ab. Daten-/Steuerkanäle werden geschlossen, unvollständige Dateien verworfen und Dateizugriffe wieder freigegeben. Schneller Modellwechsel und verspätete Antworten werden abgefangen; weitere offene Ansichten derselben Datei bleiben berücksichtigt.

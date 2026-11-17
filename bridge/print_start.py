@@ -39,7 +39,7 @@ def prepare_start(entry,metadata,choice,context):
             summary.append('Drucksteuerung: '+tray['pressure_profile']+' · gemeldeter K-Faktor '+(f"{tray['pressure_k']:.4f}" if tray.get('pressure_k') is not None else 'unbekannt'))
     command=dict(command='project_file',param=f"Metadata/plate_{plate['index']}.gcode",project_id='0',profile_id='0',task_id='0',subtask_id='0',subtask_name=entry['name'],url='ftp:///'+quote(entry['path'].lstrip('/'),safe='/'),md5='',bed_type='auto',layer_inspect=False,use_ams=not external,ams_mapping=ams if not external else [],**options)
     fingerprint=hashlib.sha256(json.dumps([entry,command,fingerprints,context['model'],context['nozzle']],sort_keys=True).encode()).hexdigest()
-    return dict(payload=command,fingerprint=fingerprint,summary=[entry['name'],f"Druckplatte {plate['index']} · {metadata['model']} · Düse {plate['nozzle']} mm",*summary,*[dict(bed_leveling='Druckbett nivellieren',flow_cali='Dynamische Flusskontrolle',vibration_cali='Vibrationskompensation',timelapse='Zeitraffer')[k]+': '+('Ein' if v else 'Aus') for k,v in options.items()]])
+    return dict(payload=command,fingerprint=fingerprint,summary=[entry['name'],f"Modellplatte {plate['index']}"+(' · '+plate['name'] if plate.get('name') else '')+f" · {metadata['model']} · Düse {plate['nozzle']} mm",'Druckbettoberfläche laut Datei: '+(plate.get('bed_label') or 'Nicht angegeben'),*summary,*[dict(bed_leveling='Druckbett nivellieren',flow_cali='Dynamische Flusskontrolle',vibration_cali='Vibrationskompensation',timelapse='Zeitraffer')[k]+': '+('Ein' if v else 'Aus') for k,v in options.items()]])
 
 
 def pressure_status(tray,printer):

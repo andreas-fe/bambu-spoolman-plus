@@ -48,3 +48,12 @@ def test_reported_pressure_is_shown_and_changes_start_fingerprint():
     assert prepare_start(e,m,c,x)['fingerprint']!=first['fingerprint']
     assert pressure_status(dict(cali_idx=-1,k=None),printer)['pressure_profile'].startswith('Standard')
     assert pressure_status({},printer)['pressure_k'] is None
+
+
+def test_start_summary_preserves_model_plate_index_and_reports_file_surface():
+    e,m,c,x=inputs()
+    m['plates'][0].update(name='Räder',bed_label='Textured PEI Plate')
+    result=prepare_start(e,m,c,x)
+    assert any('Modellplatte 3 · Räder' in line for line in result['summary'])
+    assert 'Druckbettoberfläche laut Datei: Textured PEI Plate' in result['summary']
+    assert result['payload']['param']=='Metadata/plate_3.gcode' and result['payload']['bed_type']=='auto'

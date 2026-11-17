@@ -17,6 +17,46 @@ def finite(value,default=None):
     except (ValueError,TypeError):return default
 
 
+# Bambu Studio PrintConfig.cpp BedType values; these are file settings, not sensors.
+BED_LABELS={
+    'Cool Plate':'Cool Plate',
+    'Engineering Plate':'Engineering Plate',
+    'High Temp Plate':'Smooth PEI Plate / High Temp Plate',
+    'Textured PEI Plate':'Textured PEI Plate',
+    'Supertack Plate':'Bambu Cool Plate SuperTack',
+}
+METADATA_VERSION=2
+
+
+def plate_settings(data):
+    """Optional model_settings.config metadata, keyed by one-based plater_id."""
+    if not data or len(data)>MAX_CONFIG:return {}
+    if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():return {}
+    try:root=ET.fromstring(data)
+    except ET.ParseError:return {}
+    result={};seen=set()
+    for plate in root.findall('./plate'):
+        meta={n.get('key'):n.get('value') for n in plate.findall('metadata')}
+        try:index=int(meta.get('plater_id','0'))
+        except ValueError:continue
+        if not 1<=index<=64:continue
+        # Ambiguous optional display metadata must not be attached to a plate.
+        if index in seen:result[index]={};continue
+        seen.add(index);result[index]=meta
+    return result
+
+
+def describe_plate(index,settings,project):
+    meta=settings.get(index,{})
+    bed=meta.get('bed_type')
+    if not bed or bed=='Default Plate':bed=project.get('curr_bed_type')
+    bed=bed.strip()[:160] if isinstance(bed,str) else ''
+    if bed=='Default Plate':bed=''
+    name=meta.get('plater_name','')
+    name=name.strip()[:200] if isinstance(name,str) else ''
+    return dict(name=name,bed_type=bed,bed_label=BED_LABELS.get(bed,bed))
+
+
 def inspect_archive(stream):
     with zipfile.ZipFile(stream) as z:
         entries=z.infolist()
@@ -33,6 +73,7 @@ def inspect_archive(stream):
         root=ET.fromstring(xml)
         project=json.loads(read('Metadata/project_settings.config')) if 'Metadata/project_settings.config' in names else {}
         if not isinstance(project,dict):raise ValueError('Ungültige Projekteinstellungen.')
+        settings=plate_settings(read('Metadata/model_settings.config')) if 'Metadata/model_settings.config' in names and z.getinfo('Metadata/model_settings.config').file_size<=MAX_CONFIG else {}
         plates=[];image_bytes=0
         for plate in root.findall('.//plate'):
             meta={n.get('key'):n.get('value') for n in plate.findall('metadata')}
@@ -55,6 +96,6 @@ def inspect_archive(stream):
                 image=read(image_path)
                 if image.startswith(b'\x89PNG\r\n\x1a\n'):
                     preview='data:image/png;base64,'+base64.b64encode(image).decode();image_bytes+=len(image);break
-            plates.append(dict(outside=meta.get('outside')=='true',preview=preview,index=index,seconds=finite(meta.get('prediction')),grams=finite(meta.get('weight')),nozzle=meta.get('nozzle_diameters',''),model_id=meta.get('printer_model_id',''),filaments=filaments,objects=[o.get('name','') for o in plate.findall('object')],warnings=[w.get('msg','') for w in plate.findall('warning')]))
+            plates.append(dict(**describe_plate(index,settings,project),outside=meta.get('outside')=='true',preview=preview,index=index,seconds=finite(meta.get('prediction')),grams=finite(meta.get('weight')),nozzle=meta.get('nozzle_diameters',''),model_id=meta.get('printer_model_id',''),filaments=filaments,objects=[o.get('name','') for o in plate.findall('object')],warnings=[w.get('msg','') for w in plate.findall('warning')]))
         if not plates or len({p['index'] for p in plates})!=len(plates):raise ValueError('Keine eindeutigen geslicten Druckplatten gefunden.')
-        return dict(filament_count=len(project.get('filament_type',[])) if isinstance(project.get('filament_type'),list) else 0,model=str(project.get('printer_model','')),profile=str(project.get('printer_settings_id','')),plates=plates)
+        return dict(metadata_version=METADATA_VERSION,filament_count=len(project.get('filament_type',[])) if isinstance(project.get('filament_type'),list) else 0,model=str(project.get('printer_model','')),profile=str(project.get('printer_settings_id','')),plates=plates)

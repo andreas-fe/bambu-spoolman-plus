@@ -302,3 +302,22 @@ def test_close_before_start_is_idempotent_and_shared_view_is_not_cancelled():
     until=time.monotonic()+1
     while c.get('/api/storage/details',query_string=dict(ticket=ticket)).json['state']=='loading' and time.monotonic()<until:time.sleep(.01)
     assert c.get('/api/storage/details',query_string=dict(ticket=ticket)).json['state']=='cancelled'
+
+
+def test_model_plate_names_and_bed_surfaces_are_separate_from_indices():
+    from bridge.storage_metadata import inspect_archive,plate_settings,describe_plate
+    data=io.BytesIO()
+    with zipfile.ZipFile(data,'w') as z:
+        for index in (2,4,5):z.writestr(f'Metadata/plate_{index}.gcode','G1 X0')
+        z.writestr('Metadata/slice_info.config','<config>'+''.join(f'<plate><metadata key="index" value="{i}"/></plate>' for i in (2,4,5))+'</config>')
+        z.writestr('Metadata/project_settings.config','{"curr_bed_type":"Cool Plate"}')
+        z.writestr('Metadata/model_settings.config','<config><plate><metadata key="plater_id" value="2"/><metadata key="plater_name" value="Räder &amp; Achsen"/><metadata key="bed_type" value="Supertack Plate"/></plate><plate><metadata key="plater_id" value="4"/><metadata key="bed_type" value="Textured PEI Plate"/></plate></config>')
+    result=inspect_archive(data);a,b,c=result['plates']
+    assert result['metadata_version']==2
+    assert (a['index'],a['name'],a['bed_label'])==(2,'Räder & Achsen','Bambu Cool Plate SuperTack')
+    assert b['bed_label']=='Textured PEI Plate' and c['bed_label']=='Cool Plate'
+    assert describe_plate(2,{2:{'bed_type':'Default Plate'}},{'curr_bed_type':'High Temp Plate'})['bed_label']=='Smooth PEI Plate / High Temp Plate'
+    assert describe_plate(2,{2:{'bed_type':'Future Plate'}},{})['bed_label']=='Future Plate'
+    assert describe_plate(2,{}, {})['bed_label']==''
+    for invalid in (b'<config>',b'<!DOCTYPE config><config/>',b'<config>'+b' '*2097152):assert plate_settings(invalid)=={}
+    assert plate_settings(b'<config><plate><metadata key="plater_id" value="2"/></plate><plate><metadata key="plater_id" value="2"/><metadata key="plater_name" value="Wrong"/></plate></config>')[2]=={}

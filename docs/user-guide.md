@@ -372,3 +372,14 @@ Unter jeder Auswahl werden das **gemeldete Schachtprofil** und der **gemeldete K
 Über **Drucksteuerung im AMS prüfen / ändern** öffnet sich die vorhandene AMS-Verwaltung direkt beim gewählten Schacht. Dort das zur eingelegten Rolle passende Profil bewusst wählen und die Änderung bestätigen. Anschließend im Druckdialog **Druckerangaben aktualisieren** betätigen. Die Auswahl bleibt erhalten; eine alte Startprüfung wird verworfen. Profil-/K-Änderungen zwischen Prüfung und Start machen eine erneute Prüfung erforderlich.
 
 Eine angeforderte dynamische Flusskontrolle bleibt eine separate Druckoption. Sie ist kein automatischer Austausch aller Slicerparameter. Bei einem anderen Material oder wesentlich anderem Filamentprofil gegebenenfalls mit passendem Profil neu slicen.
+
+
+### Modellplatte und Druckbettoberfläche unterscheiden
+
+„Modellplatte 1/2/…“ bezeichnet den Bereich aus dem Bambu-Studio-Projekt. Ein gespeicherter eigener Plattenname erscheint zusätzlich. Die Nummer wird weiterhin unverändert zur Auswahl des passenden geslicten G-Codes verwendet.
+
+Separat zeigt der Dialog „Druckbettoberfläche laut Datei“, etwa **Textured PEI Plate**, **Cool Plate**, **Smooth PEI Plate / High Temp Plate** oder **Bambu Cool Plate SuperTack**. Grundlage sind die platteneigene `bed_type`-Einstellung aus `Metadata/model_settings.config` und ersatzweise `curr_bed_type` aus `Metadata/project_settings.config`. Plattenbezogene Angaben haben Vorrang. Fehlende Angaben werden als unbekannt angezeigt; eine Default-Einstellung wird nicht als konkrete Oberfläche ausgegeben.
+
+Das hilft auch bei älteren Dateien zu erkennen, für welche Oberfläche sie vorbereitet wurden. Es bestätigt weder die tatsächlich aufgelegte Platte noch die Oberfläche eines früheren Drucks, wenn die Datei zwischenzeitlich ersetzt wurde. Die Anzeige ändert keine Temperaturen und ersetzt kein erneutes Slicen für eine andere Oberfläche. Vor dem Start Datei und aufgelegte Platte vergleichen. Die Information erscheint ebenfalls in der Startbestätigung.
+
+Die Zuordnung und Bezeichnungen sind im offiziellen [Bambu-Studio-3MF-Leser](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/Format/bbs_3mf.cpp) und in dessen [Druckkonfiguration](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PrintConfig.cpp) nachvollziehbar. Bereits gecachte Dateidetails werden nach dieser Erweiterung einmal vollständig neu eingelesen; Vorschaubilder und Filamentdaten bleiben erhalten.

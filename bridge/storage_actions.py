@@ -7,7 +7,7 @@ import tempfile
 import threading
 import time
 from flask import request,jsonify
-from .storage_metadata import inspect_archive,MAX_ARCHIVE
+from .storage_metadata import inspect_archive,MAX_ARCHIVE,METADATA_VERSION
 
 
 def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,history_names=None):
@@ -17,7 +17,8 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
     def cached(entry):
         with cache.lock:
             row=cache.db.execute('SELECT data FROM storage_metadata WHERE key=? AND created>?',(cache.key(entry),time.time()-30*86400)).fetchone()
-        return json.loads(row[0]) if row else None
+        data=json.loads(row[0]) if row else None
+        return data if data and data.get('metadata_version')==METADATA_VERSION else None
     class Cancelled(Exception):pass
     def check(job):
         if job['_cancel'].is_set():raise Cancelled()
