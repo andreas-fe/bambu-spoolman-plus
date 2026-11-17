@@ -1,5 +1,15 @@
 # Änderungen
 
+## 2026-11-18 — Kontrast und schnellere Modellvorschau
+
+- Automatischer kontrastreicher Viewer-Hintergrund anhand der Filamentfarben; manuelle Wahl Hell/Dunkel mit gespeicherter Browserpräferenz in beiden Dialogen.
+- Dateidetails, 3D-Vorschau und Plattenwechsel verwenden kurzzeitig denselben geprüften Archivdownload. Kein zweiter vollständiger FTPS-Transfer direkt nach der Dateiprüfung. Private temporäre Zwischenablage: zwei Archive, zusammen 128 MiB, feste fünf Minuten Lebensdauer mit automatischer Löschung; zusätzliche Leerung über die vorhandene Cachefunktion.
+- Fehlende Leerlaufbestätigung bei Dateitransfers wird einmal erneut angefordert und als Wartezustand angezeigt. Bekannte Aktivität und Offlinezustand bleiben sofort gesperrt; ohne neue Bestätigung stoppt auch der Wiederholungsversuch. Fehlermeldungen behaupten bei fehlender Rückmeldung nicht mehr, dass ein Druck läuft.
+- Unvollständige Transfers werden nicht wiederverwendet, Cacheleerung storniert laufende Prüfungen. Druckstart-, Abschalt-, Bestands- und Zuordnungsregeln bleiben erhalten.
+- Unterstützung für das große Maze-Modell erweitert: bis zu 1,25 Mio. Segmente / fünf Mio. G-Code-Zeilen / 64 MiB Geometrie-JSON / 180 Sekunden Aufbereitung. Begrenzte konturerhaltende Pfadvereinfachung statt ausgelassener Bahnen; Querschnitt großer Szenen zur GPU-Entlastung vereinfacht. Bestehende kompatible Geometriecacheeinträge bleiben gültig.
+- Geometriecache auf 50 Modelle / 128 MiB erweitert; schnelle Kompression, ausgehandelte gzip-Übertragung großer Antworten und speichersparendes Base64-Decoding im Browser.
+- 263 Tests lokal und im NAS-Container bestanden, einschließlich einmaligem Transfer für Details plus 3D, Cachegrenzen/automatischer Löschung, Abbruch/Leerungsrennen, Konturfehlergrenze und gzip-Aushandlung sowie fehlender, aktiver und unterbrochener Statusbestätigung. Browserprüfung für schwarze/weiße/gemischte Modelle, manuelle Hintergründe und gespeicherte Präferenz erfolgreich; große Maze-Geometrie mit rund 1,17 Mio. Segmenten dargestellt. Nach Vollsicherung und verlustfreiem Testimport deployt; isolierte NAS-Aufbereitung und produktiver Cacheaufruf ohne weiteren Druckertransfer bestätigt, native Inventar-/Zuordnungsdaten unverändert.
+
 ## 2026-11-17 — Überarbeitete 3D-Vorschau
 
 - Gemeinsamer Betrachter in „Vorschau öffnen“ und „Details & Drucken“, ausdrücklich nachladbar; zusätzliche Modellplattenauswahl im Vorschaudialog.

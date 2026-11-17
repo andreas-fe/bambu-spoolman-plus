@@ -1312,6 +1312,14 @@ def storage_idle():
         return not db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING')").fetchone()
 
 
+def storage_read_state():
+    if mqtt_client is None or not mqtt_client.is_connected():return 'offline'
+    if printer_status.get('state') in ('RUNNING','PREPARE','PAUSE'):return 'active'
+    with store.connection() as db:
+        if db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING')").fetchone():return 'active'
+    return 'unconfirmed'
+
+
 def storage_context():
     if app.config.get('DEVICE_RESTART_PENDING'):raise ValueError('Verbindungseinstellungen werden übernommen. Druckstart nach dem Neustart neu vorbereiten.')
     if DRY_RUN or not mqtt_client or not mqtt_client.is_connected() or not storage_idle():
@@ -1375,7 +1383,7 @@ def storage_history(name):
     return [{**dict(r),'cost_label':print_costs.history_label(r['id'])} for r in rows if storage_name(name) in (storage_name(r['filename']),storage_name(r['subtask_name']))][:30]
 
 
-printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history))
+printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,read_state=storage_read_state,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history))
 
 
 devices_busy=register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,

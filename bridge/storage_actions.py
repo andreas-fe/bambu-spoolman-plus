@@ -1,5 +1,6 @@
 """Read-only background archive inspection and single-use reviewed print starts."""
 import json
+import gzip
 import secrets
 import socket
 import ssl
@@ -9,13 +10,23 @@ import time
 from flask import request,jsonify
 from .storage_metadata import inspect_archive,MAX_ARCHIVE,METADATA_VERSION
 from .model_preview import build_model,cached_model,save_model
+from .archive_cache import ArchiveCache
 
 
-def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,history_names=None):
-    jobs={};reviews={};cancelled_views={};lock=threading.Lock()
+def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,history_names=None,read_state=None):
+    jobs={};reviews={};cancelled_views={};lock=threading.Lock();archives=ArchiveCache()
     with cache.lock:
         cache.db.execute('CREATE TABLE IF NOT EXISTS storage_models(key TEXT PRIMARY KEY,path_key TEXT,data BLOB,created REAL)')
         cache.db.execute('CREATE TABLE IF NOT EXISTS storage_metadata(key TEXT PRIMARY KEY,data TEXT,created REAL)');cache.db.commit()
+    @app.after_request
+    def compress_storage_model(response):
+        if request.path in ('/storage/model','/api/storage/details') and response.mimetype=='application/json':
+            response.vary.add('Accept-Encoding')
+            if request.accept_encodings['gzip'] and not response.headers.get('Content-Encoding'):
+                raw=response.get_data()
+                if len(raw)>256*1024:
+                    response.set_data(gzip.compress(raw,compresslevel=1));response.headers['Content-Encoding']='gzip'
+        return response
     def cached(entry):
         with cache.lock:
             row=cache.db.execute('SELECT data FROM storage_metadata WHERE key=? AND created>?',(cache.key(entry),time.time()-30*86400)).fetchone()
@@ -34,21 +45,35 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                 except (OSError,ValueError):pass
                 try:stream.close()
                 except OSError:pass
+    def require_idle(job):
+        check(job)
+        if refresh_idle():return
+        state=read_state() if read_state else 'unconfirmed'
+        # Retry only absent confirmation. Known activity/offline must stop at once.
+        if state=='unconfirmed':
+            job['phase']='waiting_status';check(job)
+            if refresh_idle():job['phase']='reading';return
+            state=read_state() if read_state else 'unconfirmed'
+        message={'active':'Drucker meldet Aktivität. Übertragung gestoppt.',
+                 'offline':'Druckerverbindung unterbrochen. Übertragung gestoppt.'}.get(state,
+                 'Frische Leerlaufbestätigung fehlt trotz erneuter Abfrage. Übertragung gestoppt; das bedeutet nicht, dass ein Druck läuft. Bitte erneut laden.')
+        raise ValueError(message)
+
     def worker(ticket,entry):
-        job=jobs[ticket];ftp=None;draft=None;acquired=False;plate=job.get('plate')
+        job=jobs[ticket];ftp=None;draft=None;acquired=False;plate=job.get('plate');data=None
         try:
             check(job)
-            if not refresh_idle():raise ValueError('Dateidetails bitte im bestätigten Leerlauf laden.')
-            check(job)
-            if not 0<entry['size']<=MAX_ARCHIVE:raise ValueError('Dateidetails unterstützen Druckarchive bis 128 MiB.')
-            # Status refresh and connection setup must not own the filesystem lock.
-            ftp=storage.factory();job['_ftp']=ftp;check(job)
-            until=time.monotonic()+5
-            while not storage.lock.acquire(timeout=.05):
-                check(job)
-                if time.monotonic()>until:raise ValueError('Dateizugriff läuft bereits. Bitte erneut laden.')
-            acquired=True;check(job)
-            with tempfile.TemporaryFile() as data:
+            generation=archives.generation;key=cache.key(entry);data=archives.get(key)
+            job['archive_reused']=data is not None
+            if data is None:
+                require_idle(job)
+                if not 0<entry['size']<=MAX_ARCHIVE:raise ValueError('Dateidetails unterstützen Druckarchive bis 128 MiB.')
+                ftp=storage.factory();job['_ftp']=ftp;check(job)
+                until=time.monotonic()+5
+                while not storage.lock.acquire(timeout=.05):
+                    check(job)
+                    if time.monotonic()>until:raise ValueError('Dateizugriff läuft bereits. Bitte erneut laden.')
+                acquired=True;check(job);data=tempfile.TemporaryFile()
                 storage.checked(ftp,entry);check(job)
                 deadline=time.monotonic()+240;next_idle=time.monotonic()+15
                 from .metadata_draft import DraftCollector
@@ -63,7 +88,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                         check(job)
                         if time.monotonic()>deadline:raise ValueError('Zeitlimit beim Laden der Dateidetails erreicht.')
                         if time.monotonic()>next_idle:
-                            if not refresh_idle():raise ValueError('Drucker nicht mehr im Leerlauf. Übertragung gestoppt.')
+                            require_idle(job)
                             next_idle=time.monotonic()+15;check(job)
                         if data.tell()+len(block)>min(MAX_ARCHIVE,entry['size']):raise ValueError('Dateigröße geändert oder Größenlimit erreicht.')
                         data.write(block);job['received']=data.tell()
@@ -76,29 +101,32 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                 check(job)
                 if data.tell()!=entry['size']:raise ValueError('Druckarchiv unvollständig übertragen.')
                 storage.checked(ftp,entry);check(job);ftp.close();ftp=None;job.pop('_ftp',None);storage.lock.release();acquired=False
-                data.seek(0);metadata=inspect_archive(data);check(job)
-                if plate is not None:
-                    job['phase']='building';data.seek(0);result=build_model(data,plate,metadata,lambda:check(job))
-                else:result=metadata
-                check(job)
+            else:job['received']=entry['size']
+            job['phase']='metadata';data.seek(0);metadata=inspect_archive(data);check(job)
+            if not job['archive_reused']:
+                try:archives.put(key,data,lambda:check(job),generation)
+                except OSError:pass  # Optional speedup; unavailable temp space must not fail inspection.
+            if plate is not None:
+                job['phase']='building';data.seek(0);result=build_model(data,plate,metadata,lambda:check(job))
+            check(job)
             with lock:
                 check(job)
+                with cache.lock:
+                    cache.db.execute('INSERT OR REPLACE INTO storage_metadata VALUES (?,?,?)',(cache.key(entry),json.dumps(metadata),time.time()))
+                    cache.db.execute('DELETE FROM storage_metadata WHERE created<?',(time.time()-30*86400,))
+                    while True:
+                        count,size=cache.db.execute('SELECT COUNT(*),COALESCE(SUM(length(data)),0) FROM storage_metadata').fetchone()
+                        if count<=100 and size<=16*1024*1024:break
+                        cache.db.execute('DELETE FROM storage_metadata WHERE key=(SELECT key FROM storage_metadata ORDER BY created LIMIT 1)')
+                    cache.db.commit()
                 if plate is not None:
                     save_model(cache,entry,plate,result);job.update(state='done',model_entry=entry)
-                else:
-                    with cache.lock:
-                        cache.db.execute('INSERT OR REPLACE INTO storage_metadata VALUES (?,?,?)',(cache.key(entry),json.dumps(result),time.time()))
-                        cache.db.execute('DELETE FROM storage_metadata WHERE created<?',(time.time()-30*86400,))
-                        while True:
-                            count,size=cache.db.execute('SELECT COUNT(*),COALESCE(SUM(length(data)),0) FROM storage_metadata').fetchone()
-                            if count<=100 and size<=16*1024*1024:break
-                            cache.db.execute('DELETE FROM storage_metadata WHERE key=(SELECT key FROM storage_metadata ORDER BY created LIMIT 1)')
-                        cache.db.commit()
-                    job.update(state='done',metadata=result)
+                else:job.update(state='done',metadata=metadata)
         except Cancelled:job.update(state='cancelled')
         except ValueError as e:job.update(state='cancelled' if job['_cancel'].is_set() else 'error',error=str(e))
         except Exception:job.update(state='cancelled' if job['_cancel'].is_set() else 'error',error='Dateidetails konnten nicht gelesen werden. Verbindung und geslicte 3MF prüfen.')
         finally:
+            if data:data.close()
             if draft:
                 if job['_cancel'].is_set():draft.abort()
                 else:draft.close()
@@ -108,6 +136,14 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
             job.pop('_stream',None);job.pop('_ftp',None)
             if acquired:storage.lock.release()
             job['_stopped'].set()
+
+    def clear_inspections():
+        with lock:
+            running=[j for j in jobs.values() if j['state']=='loading']
+            for job in running:job['_cancel'].set()
+            archives.clear()
+        for job in running:interrupt(job)
+
     @app.post('/storage/details/cancel')
     def cancel_details():
         viewer=request.form.get('viewer','');ticket=request.form.get('ticket')
@@ -168,7 +204,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
         if not job or time.monotonic()-job['created']>900:return jsonify(error='Dateiprüfung abgelaufen. Bitte erneut öffnen.'),404
         model=cached_model(cache,job['model_entry'],job['plate']) if job['state']=='done' and 'model_entry' in job else None
         if job['state']=='done' and 'model_entry' in job and model is None:return jsonify(state='error',error='3D-Cache wurde geleert. Bitte Vorschau erneut laden.')
-        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),draft_metadata=job.get('draft_metadata'),model=model,phase=job.get('phase'),error=job.get('error'))
+        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),draft_metadata=job.get('draft_metadata'),model=model,archive_reused=job.get('archive_reused',False),phase=job.get('phase'),error=job.get('error'))
     @app.get('/api/storage/history')
     def storage_history():
         try:
@@ -212,3 +248,5 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
         except ValueError as e:return jsonify(error=str(e)),409
         except Exception:return jsonify(error='Druckstart nicht eindeutig bestätigt. Druckerstatus prüfen; nicht ungeprüft erneut starten.'),503
         finally:storage.lock.release()
+
+    return clear_inspections

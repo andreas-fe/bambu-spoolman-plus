@@ -72,7 +72,7 @@ class Storage:
             ftp.close()
 
 
-def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namespace="",handlers=None):
+def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namespace="",handlers=None,read_state=None):
     cache=PreviewCache(cache_path,namespace)
     storage=Storage(factory)
     signer=lambda:URLSafeTimedSerializer(app.secret_key,salt='printer-file-v1')
@@ -87,7 +87,7 @@ def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namesp
     from .storage_actions import register_actions
     from .storage_rename import register_rename
     history_names=register_rename(app,storage,decode,cache,refresh_idle,blocked,log)
-    register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,history_names)
+    clear_inspections=register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,history_names,read_state)
     @app.get('/storage')
     def storage_page():
         import secrets
@@ -115,7 +115,7 @@ def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namesp
     @app.post('/storage/preview-cache/clear')
     def clear_storage_preview_cache():
         if request.form.get('confirm')!='clear-previews':return jsonify(error='Bildcache-Leerung bestätigen.'),400
-        cache.clear()
+        clear_inspections();cache.clear()
         return jsonify(message='App-Vorschaubilder und 3D-Cache geleert. Druckerdateien, Buchungen und Bestand unverändert.')
     @app.post('/storage/preview')
     def preview():

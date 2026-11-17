@@ -49,7 +49,7 @@ def wait(client,ticket):
     raise AssertionError('worker timeout')
 
 
-def test_background_model_is_cached_separately_and_does_not_enable_print_metadata(tmp_path):
+def test_background_model_and_inspected_metadata_are_cached_separately(tmp_path):
     data=archive('M83\nG1 X20 E1\nG1 Y20 E1\n');ftp=FTP();ftp.size=len(data);transfers=[]
     ftp.transfercmd=lambda cmd:(transfers.append(cmd),FTPStream(data))[1]
     app=Flask(__name__);app.secret_key='test';register_storage(app,lambda:ftp,lambda n:None,lambda:True,lambda s:None,cache_path=tmp_path/'previews.sqlite3')
@@ -60,7 +60,7 @@ def test_background_model_is_cached_separately_and_does_not_enable_print_metadat
     result=wait(client,started['ticket']);assert result['state']=='done' and result['model']['segments']==2 and result['metadata'] is None
     assert client.post('/storage/model',data=dict(file=entry['token'],plate=3,viewer='model-two')).json['state']=='done' and len(transfers)==1
     normal=client.post('/storage/details',data=dict(file=entry['token'],viewer='normal')).json
-    assert normal['state']=='loading' and wait(client,normal['ticket'])['metadata']['plates'][0]['index']==3 and len(transfers)==2
+    assert normal['state']=='done' and normal['metadata']['plates'][0]['index']==3 and len(transfers)==1
     assert client.post('/storage/preview-cache/clear',data={'confirm':'clear-previews'}).status_code==200
     last=client.post('/storage/model',data=dict(file=entry['token'],plate=3,viewer='model-three')).json;assert last['state']=='loading'
     assert wait(client,last['ticket'])['state']=='done'
@@ -123,3 +123,84 @@ def test_model_cache_cleared_before_completed_poll_is_explicit(tmp_path):
     assert wait(client,start['ticket'])['state']=='done'
     client.post('/storage/preview-cache/clear',data={'confirm':'clear-previews'})
     result=wait(client,start['ticket']);assert result['state']=='error' and 'Cache' in result['error']
+
+
+def test_details_then_models_reuse_one_fully_verified_download(tmp_path):
+    data=archive('M83\nG1 X20 E1\nG1 Y20 E1\n');ftp=FTP();ftp.size=len(data);transfers=[]
+    ftp.transfercmd=lambda cmd:(transfers.append(cmd),FTPStream(data))[1]
+    app=Flask(__name__);app.secret_key='test';register_storage(app,lambda:ftp,lambda n:None,lambda:True,lambda s:None,cache_path=tmp_path/'cache.sqlite3')
+    c=app.test_client();entry=c.get('/api/storage?folder=/').json['files'][0]
+    detail=c.post('/storage/details',data=dict(file=entry['token'],viewer='detail')).json
+    assert wait(c,detail['ticket'])['state']=='done'
+    model=c.post('/storage/model',data=dict(file=entry['token'],plate=3,viewer='model')).json
+    result=wait(c,model['ticket']);assert result['state']=='done' and result['archive_reused'] and len(transfers)==1
+    c.post('/storage/preview-cache/clear',data={'confirm':'clear-previews'})
+    again=c.post('/storage/model',data=dict(file=entry['token'],plate=3,viewer='new')).json
+    assert wait(c,again['ticket'])['state']=='done' and len(transfers)==2
+
+
+@pytest.mark.parametrize('state,replies,expected,calls',[
+    ('unconfirmed',[True,False,True],'done',3),
+    ('unconfirmed',[True,False,False],'Leerlaufbestätigung fehlt',3),
+    ('active',[True,False],'Aktivität',2),
+    ('offline',[True,False],'unterbrochen',2),
+])
+def test_busy_transfer_retries_missing_confirmation_but_stops_activity_and_offline(monkeypatch,state,replies,expected,calls):
+    from types import SimpleNamespace
+    import bridge.storage_actions as actions
+    clock=[100.];answers=iter(replies);checks=[]
+    monkeypatch.setattr(actions,'time',SimpleNamespace(monotonic=lambda:clock[0],time=time.time))
+    data=archive('M83\nG1 X20 E1\n');ftp=FTP();ftp.size=len(data)
+    class Slow(FTPStream):
+        def recv(self,size):
+            if self.tell()==0:clock[0]+=16
+            return super().recv(size)
+    ftp.transfercmd=lambda cmd:Slow(data)
+    def idle():checks.append(1);return next(answers)
+    app=Flask(__name__);app.secret_key='test';register_storage(app,lambda:ftp,lambda n:None,idle,lambda s:None,read_state=lambda:state)
+    c=app.test_client();entry=c.get('/api/storage?folder=/').json['files'][0]
+    started=c.post('/storage/details',data=dict(file=entry['token'],viewer='slow')).json
+    result=wait(c,started['ticket']);assert len(checks)==calls
+    if expected=='done':assert result['state']=='done'
+    else:assert result['state']=='error' and expected in result['error']
+
+
+def test_contour_simplification_preserves_corners_closure_and_error_bound():
+    import math
+    from bridge.model_preview import simplify_path
+    points=[(10*math.cos(i*.001),10*math.sin(i*.001),.2) for i in range(6284)]
+    reduced=simplify_path(points)
+    assert reduced[0]==points[0] and reduced[-1]==points[-1] and len(reduced)<len(points)//10
+    for p in points:
+        def distance(a,b):
+            v=[b[i]-a[i] for i in range(3)];q=[p[i]-a[i] for i in range(3)];length=sum(n*n for n in v)
+            t=max(0,min(1,sum(q[i]*v[i] for i in range(3))/length)) if length else 0
+            return math.sqrt(sum((q[i]-t*v[i])**2 for i in range(3)))
+        assert min(distance(a,b) for a,b in zip(reduced,reduced[1:]))<=.0350001
+    square=[(0,0,0),(1,0,0),(1,1,0),(0,1,0),(0,0,0)]
+    assert simplify_path(square)==square
+
+
+def test_simplification_never_connects_separate_extrusions_or_different_colors():
+    code='M83\nG1 X1 E1\nG1 X2 E1\nG0 X10\nG1 X11 E1\nT1\nG1 X12 E1\n'
+    result=build_model(io.BytesIO(archive(code)),3,metadata())
+    assert result['segments']==3
+    positions=struct.unpack('<18f',base64.b64decode(result['positions']))
+    assert positions[:6]==(0,0,0,2,0,0) and positions[6:12]==(10,0,0,11,0,0)
+    assert base64.b64decode(result['colors'])[-6:]==bytes.fromhex('C59B27')*2
+
+
+def test_large_model_http_compression_preserves_result_and_respects_negotiation():
+    import gzip
+    text='M83\n'+''.join(f'T{i%2}\nG1 X{i%2} Y{i//2} E1\n' for i in range(1,6001))
+    data=archive(text);ftp=FTP();ftp.size=len(data);ftp.transfercmd=lambda cmd:FTPStream(data)
+    app=Flask(__name__);app.secret_key='test';register_storage(app,lambda:ftp,lambda n:None,lambda:True,lambda s:None)
+    client=app.test_client();entry=client.get('/api/storage?folder=/').json['files'][0]
+    start=client.post('/storage/model',data=dict(file=entry['token'],plate=3,viewer='compressed')).json
+    result=wait(client,start['ticket']);assert result['model']['segments']==6000
+    response=client.get('/api/storage/details',query_string=dict(ticket=start['ticket']),headers={'Accept-Encoding':'gzip'})
+    assert response.headers['Content-Encoding']=='gzip' and 'Accept-Encoding' in response.vary
+    assert json.loads(gzip.decompress(response.data))==result
+    plain=client.get('/api/storage/details',query_string=dict(ticket=start['ticket']),headers={'Accept-Encoding':'gzip;q=0'})
+    assert 'Content-Encoding' not in plain.headers and plain.json==result
+    assert len(response.data)<len(plain.data)/2

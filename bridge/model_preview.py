@@ -9,9 +9,9 @@ import zipfile
 import zlib
 
 VERSION=3
-MAX_SEGMENTS=400000
+MAX_SEGMENTS=1250000
 MAX_GCODE=192*1024*1024
-MAX_MODEL_JSON=32*1024*1024
+MAX_MODEL_JSON=64*1024*1024
 WORDS=re.compile(r'([A-Z])\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+))')
 
 
@@ -44,6 +44,24 @@ def arc_points(start,end,values,clockwise,plane=17,absolute_center=False):
         yield tuple(point)
 
 
+def simplify_path(points,tolerance=.035):
+    """Bounded-error Douglas-Peucker reduction; endpoints and corners survive."""
+    if len(points)<3:return points
+    keep={0,len(points)-1};pending=[(0,len(points)-1)];threshold=tolerance*tolerance
+    while pending:
+        first,last=pending.pop();ax,ay,az=points[first];bx,by,bz=points[last]
+        dx,dy,dz=bx-ax,by-ay,bz-az;length=dx*dx+dy*dy+dz*dz
+        distance=threshold;selected=None
+        for j in range(first+1,last):
+            x,y,z=points[j];qx,qy,qz=x-ax,y-ay,z-az
+            t=max(0,min(1,(qx*dx+qy*dy+qz*dz)/length)) if length else 0
+            ex,ey,ez=qx-t*dx,qy-t*dy,qz-t*dz;squared=ex*ex+ey*ey+ez*ez
+            if squared>distance:distance=squared;selected=j
+        if selected is not None:
+            keep.add(selected);pending.extend(((first,selected),(selected,last)))
+    return [points[i] for i in sorted(keep)]
+
+
 def build_model(stream,plate,metadata,cancel=lambda:None):
     selected=next((p for p in metadata['plates'] if p['index']==plate),None)
     if not selected:raise ValueError('Modellplatte nicht in den geprüften Dateidaten vorhanden.')
@@ -52,25 +70,29 @@ def build_model(stream,plate,metadata,cancel=lambda:None):
     except ValueError:width=.44
     width=max(.05,min(3,width));height=.2;role=0;custom=False;wiping=False;layer_started=False;plane=17;absolute_center=False
     tool=next(iter(palette),0);pos=(0.,0.,0.);extruder=0.;relative=False;relative_e=False
-    records=[];count=0;arcs=0;removed=0;warnings=set();deadline=time.monotonic()+30
+    records=[];path_points=[];path_props=None;lower=[math.inf]*3;upper=[-math.inf]*3;count=0;arcs=0;removed=0;warnings=set();deadline=time.monotonic()+180
     def guard():
         cancel()
-        if time.monotonic()>deadline:raise ValueError('3D-Aufbereitung überschreitet 30 Sekunden.')
+        if time.monotonic()>deadline:raise ValueError('3D-Aufbereitung überschreitet 180 Sekunden.')
+    def flush_path():
+        if len(path_points)<2:return
+        guard();points=simplify_path(path_points)
+        for a,b in zip(points,points[1:]):
+            if len(records)>=MAX_SEGMENTS:raise ValueError('Modell überschreitet die Geometriegrenze der 3D-Ansicht; eingebettetes Vorschaubild bleibt verfügbar.')
+            records.append((a,b,*path_props))
+        path_points[:]=[path_points[-1]]
     def emit(a,b):
-        nonlocal count
+        nonlocal count,path_props
         if not any(abs(b[i]-a[i])>1e-7 for i in range(3)):return
         if any(not math.isfinite(n) or abs(n)>10000 for n in (*a,*b)):raise ValueError('G-Code-Koordinaten außerhalb der Vorschaugrenzen.')
         count+=1
         if count%1024==0:guard()
-        color=palette.get(tool,b'\x94\xa8\xb5')
-        # Merge only truly collinear connected segments; never discard alternate paths.
-        if records and records[-1][1]==a and records[-1][2:]==(color,width,height,role):
-            first=records[-1][0];ab=[a[i]-first[i] for i in range(3)];bc=[b[i]-a[i] for i in range(3)]
-            cross=[ab[1]*bc[2]-ab[2]*bc[1],ab[2]*bc[0]-ab[0]*bc[2],ab[0]*bc[1]-ab[1]*bc[0]]
-            if sum(x*x for x in cross)<1e-12 and sum(ab[i]*bc[i] for i in range(3))>0:
-                records[-1]=(first,b,color,width,height,role);return
-        if len(records)>=MAX_SEGMENTS:raise ValueError('Modell überschreitet die Geometriegrenze der 3D-Ansicht; eingebettetes Vorschaubild bleibt verfügbar.')
-        records.append((a,b,color,width,height,role))
+        props=(palette.get(tool,b'\x94\xa8\xb5'),width,height,role)
+        if path_props!=props or not path_points or path_points[-1]!=a:
+            flush_path();path_points[:]=[a];path_props=props
+        path_points.append(b)
+        for i in range(3):lower[i]=min(lower[i],a[i],b[i]);upper[i]=max(upper[i],a[i],b[i])
+        if len(path_points)>=2048:flush_path()
     with zipfile.ZipFile(stream) as z:
         info=z.getinfo(f'Metadata/plate_{plate}.gcode')
         if info.file_size>MAX_GCODE or info.flag_bits&1:raise ValueError('3D unterstützt unverschlüsselten G-Code bis 192 MiB.')
@@ -80,7 +102,7 @@ def build_model(stream,plate,metadata,cancel=lambda:None):
                 raw=source.readline(4097)
                 if not raw:break
                 lines+=1
-                if lines>3000000:raise ValueError('G-Code überschreitet drei Millionen Zeilen.')
+                if lines>5000000:raise ValueError('G-Code überschreitet fünf Millionen Zeilen.')
                 if len(raw)>4096:
                     if b';' not in raw:raise ValueError('G-Code-Befehl überschreitet 4 KiB.')
                     prefix=raw.split(b';',1)[0];tail=raw
@@ -89,7 +111,7 @@ def build_model(stream,plate,metadata,cancel=lambda:None):
                 if lines%128==0:guard()
                 text=raw.decode('ascii','ignore').strip().upper()
                 if re.match(r';\s*(?:CHANGE_LAYER|LAYER_CHANGE|LAYER\s*:\s*0\b)',text) and not layer_started:
-                    removed+=count;records.clear();count=0;layer_started=True
+                    removed+=count;records.clear();path_points.clear();path_props=None;lower[:]=[math.inf]*3;upper[:]=[-math.inf]*3;count=0;layer_started=True
                 feature=re.match(r';\s*(?:FEATURE|TYPE)\s*:\s*(.*)',text)
                 if feature:
                     name=feature[1];custom=any(v in name for v in ('CUSTOM','PRIME TOWER','PURGE','WIPE TOWER'))
@@ -148,11 +170,13 @@ def build_model(stream,plate,metadata,cancel=lambda:None):
                             warnings.add('Einzelne ungültige Kreisbögen wurden als direkte Verbindungen dargestellt.');emit(pos,target)
                     else:emit(pos,target)
                 pos=target
-    guard()
+    flush_path();guard()
     if not records:raise ValueError('Keine darstellbaren Modellbahnen gefunden.')
-    lower=[min(min(a[i],b[i]) for a,b,*_ in records) for i in range(3)];upper=[max(max(a[i],b[i]) for a,b,*_ in records) for i in range(3)]
     positions=bytearray();colors=bytearray();dimensions=bytearray();roles=bytearray()
-    for a,b,color,w,h,r in records:positions.extend(struct.pack('<6f',*a,*b));colors.extend(color*2);dimensions.extend(struct.pack('<2f',w,h));roles.append(r)
+    for index,(a,b,color,w,h,r) in enumerate(records):
+        if index%4096==0:guard()
+        positions.extend(struct.pack('<6f',*a,*b));colors.extend(color*2);dimensions.extend(struct.pack('<2f',w,h));roles.append(r)
+    warnings.add('Zusammenhängende Konturen mit höchstens 0,035 mm zusätzlicher Abweichung vereinfacht; keine Bahnen pauschal ausgelassen.')
     warnings.add('Darstellung aus Druckbahnen; Breite und Schichthöhe werden aus Slicerangaben angenähert. Reinigung und Startbahnen sind ausgeblendet, sofern markiert.')
     return dict(version=VERSION,plate=plate,positions=base64.b64encode(positions).decode(),colors=base64.b64encode(colors).decode(),dimensions=base64.b64encode(dimensions).decode(),roles=base64.b64encode(roles).decode(),
                 segments=len(records),total_segments=count,bounds=[lower,upper],warnings=sorted(warnings),arc_commands=arcs,removed_segments=removed)
@@ -173,12 +197,12 @@ def cached_model(cache,entry,plate):
 def save_model(cache,entry,plate,data):
     raw=json.dumps(data,separators=(',',':')).encode()
     if len(raw)>MAX_MODEL_JSON:raise ValueError('3D-Daten überschreiten das Vorschau-Limit.')
-    payload=zlib.compress(raw)
+    payload=zlib.compress(raw,level=1)
     with cache.lock:
         cache.db.execute('DELETE FROM storage_models WHERE created<?',(time.time()-30*86400,))
         cache.db.execute('INSERT OR REPLACE INTO storage_models VALUES (?,?,?,?)',(model_key(cache,entry,plate),cache.path_key(entry),payload,time.time()))
         while True:
             count,size=cache.db.execute('SELECT COUNT(*),COALESCE(SUM(length(data)),0) FROM storage_models').fetchone()
-            if count<=20 and size<=32*1024*1024:break
+            if count<=50 and size<=128*1024*1024:break
             cache.db.execute('DELETE FROM storage_models WHERE key=(SELECT key FROM storage_models ORDER BY created,key LIMIT 1)')
         cache.db.commit()
