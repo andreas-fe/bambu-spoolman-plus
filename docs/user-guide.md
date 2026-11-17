@@ -405,8 +405,28 @@ Die Stromerfassung arbeitet ohne geöffneten Browser: Bei aktiven Druckaufträge
 
 Nur wenn der Auftrag vollständig gebucht ist, alle Rollenpreise vorliegen, ein Tarif bekannt ist und die Auftragszeit vollständig abgedeckt wurde, erscheint eine Gesamtsumme als Schätzung. Sonst steht „Unvollständig“; vorhandene Teilbeträge und die Messabdeckung bleiben sichtbar. Material- und Stromkomponente werden jeweils auf Cent gerundet; die Gesamtsumme addiert diese angezeigten Komponenten. Abschreibungen, Maschinenverschleiß, Arbeitszeit und Grundgebühren sind nicht enthalten.
 
-Historische Drucke vor Einführung der Funktion erhalten keine erfundenen Verbrauchs- oder Preisdaten. Es erfolgt keine nachträgliche Belastung von Spulen. Kosten von laufenden Simulationen werden nicht als gebuchte Druckkosten dargestellt.
+Historische Drucke werden standardmäßig nicht rückwirkend bewertet. Eine ausdrücklich veranlasste Rückrechnung kann separate Referenzschätzungen ergänzen; ihre Annahmen werden ausgewiesen. Es erfolgt keine nachträgliche Belastung von Spulen. Kosten von laufenden Simulationen werden nicht als gebuchte Druckkosten dargestellt.
 
 Im hellen Design behalten Tabellenaktionen und Sortierbuttons auch bei Hover und Tastaturbedienung kontrastreiche dunkle Schrift.
 
 ![Filamentprodukte mit lesbaren Tabellenaktionen im hellen Design](assets/current/light-products.png)
+
+
+### Vereinfachte Filamentverwaltung und Standardgewicht
+
+Die Spulenkarten sind die Hauptansicht. **Filamentprodukte** stehen darunter als eigener Bereich. Die zusätzliche tabellarische Spulenverwaltung, Hersteller und Lagerorte sind unter **Weitere Inventarverwaltung** zusammengefasst und zunächst eingeklappt. Der Klappzustand wird im Browser gespeichert. Karten-Bearbeitung, „Spule hinzufügen“, gespeicherte Datensätze und direkte Bereichslinks öffnen bei Bedarf den passenden Bereich. Die Tabellenansicht bleibt unter anderem zum Archivieren und Entfernen erhalten.
+
+![Zusätzliche Inventarverwaltung eingeklappt](assets/current/inventory-management.png)
+
+Beim Hinzufügen einer neuen Spule sind **1.000 g Startgewicht** vorausgefüllt. Der Wert kann geändert oder für einen unbekannten Bestand gelöscht werden. Diese Vorgabe setzt keine vorhandene Spule zurück und verändert keine Preis-Bezugsmenge.
+
+### Historische Druckkosten als Referenz
+
+Auf ausdrücklichen Wunsch können abgeschlossene Drucke nachträglich eine **historische Rückrechnung** erhalten. Diese wird getrennt von Verbrauchsbuchungen und gemessenen Stromdaten gespeichert. Die ursprünglichen Bestände, Verbrauchsmengen und Messwerte bleiben unverändert. Eine Wiederholung ergänzt keine doppelten Schätzungen und überschreibt keine vorhandene Rückrechnung. Simulationen und aktive Drucke sind ausgeschlossen.
+
+Vorrang haben gebuchte Materialmengen und gespeicherte Preis-Snapshots. Fehlende Preise werden aus den heutigen Rollenpreisen ergänzt, ersatzweise aus Preisen desselben Produkts/Materials oder dem Median vorhandener Europreise. Ohne Vergleich gilt beispielhaft 20 €/kg; bei unbekannter Preis-Bezugsmenge werden 1.000 g angenommen. Ohne gebuchte Menge werden gespeicherte Slicerwerte verwendet; sonst ausdrücklich 2 g für einen Kalibrierungsauftrag oder 10 g als allgemeines Beispiel angesetzt. Das erzeugt ausschließlich Kostenreferenzen, keine Materialbuchung.
+
+Für die Laufzeit werden gespeicherte Messzeiten, verfügbare Slicerzeiten oder eine plausible Zeitspanne zwischen Auftragserkennung und letzter Aktualisierung genutzt. Letztere kann Wartezeit auf Zuordnung/Buchung enthalten. Ohne plausible Angaben gelten beispielhaft fünf Minuten für Kalibrierung oder 30 Minuten für sonstige Drucke. Fehlende Messzeit wird mit **80 W mittlerer Leistung** geschätzt. Vorhandene Messenergie bleibt berücksichtigt. Der damalige Tarif hat Vorrang, sonst der heute gepflegte Tarif; ohne Angabe wird **0,35 €/kWh** angenommen.
+
+Die Kostenübersicht kennzeichnet diese Einträge mit **Historische Rückrechnung**. Unter **Annahmen der Rückrechnung anzeigen** stehen die tatsächlich verwendeten Quellen und Ersatzwerte. Die Messabdeckung bleibt die echte Messabdeckung und wird durch eine Schätzung nicht auf 100 % gesetzt. Die Werte dienen als Anschauungsbeispiele; sie belegen keine tatsächlich historischen Kaufpreise oder Strommessungen.
+

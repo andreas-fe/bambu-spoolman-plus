@@ -16,7 +16,7 @@ def test_v2_migration_adds_product_defaults_without_changing_existing_data(tmp_p
         db.execute("INSERT INTO spools(filament_id,current_weight_g,empty_spool_weight_g,created_at,updated_at) VALUES (1,400,217,'t','t')")
         product_before = dict(db.execute('SELECT * FROM filaments').fetchone())
         spool_before = dict(db.execute('SELECT * FROM spools').fetchone())
-    assert apply_migrations(path) == apply_migrations(path) == 5
+    assert apply_migrations(path) == apply_migrations(path) == 6
     with connection(path) as db:
         product = dict(db.execute('SELECT * FROM filaments').fetchone())
         assert {key: product[key] for key in product_before} == product_before

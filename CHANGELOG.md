@@ -1,5 +1,13 @@
 # Änderungen
 
+## 2026-11-17 — Historische Kostenbeispiele und vereinfachte Filamentverwaltung
+
+- Neue Spulen starten im Formular und bei fehlendem Startgewichtsparameter mit 1.000 g. Bewusst leere Angaben bleiben unbekannt, 0 und andere Werte bleiben möglich; bestehende Rollen werden nicht geändert.
+- Filamentprodukte als eigener Bereich unter den Spulenkarten. Zusätzliche Spulenliste, Hersteller und Lagerorte unter „Weitere Inventarverwaltung“, standardmäßig eingeklappt und mit gespeicherter Browserpräferenz. Bearbeiten/Hinzufügen und direkte Bereichslinks öffnen die passende Ansicht; Tastaturbedienung bleibt erhalten.
+- Ausdrücklich veranlasste historische Kostenergänzung als separate, unveränderliche Referenzschätzung je abgeschlossenem Druck. Vorrang für gebuchte Mengen, damalige Preissnapshots und verfügbare Slicerzeiten; sonst gepflegte heutige Rollenpreise, Vergleichspreise und dokumentierte Mengen-/Zeitannahmen. Ohne Messung beispielhaft 80 W mittlere Leistung, ohne Tarif 0,35 €/kWh. Vorhandene Messenergie bleibt erhalten.
+- „Historische Rückrechnung“ samt aufklappbaren Annahmen in der Kostenübersicht und Kennzeichnung in der Dateihistorie. Keine zusätzlichen Filamentabzüge, keine Veränderung ursprünglicher Buchungen und keine erfundene Messabdeckung. Aktive Aufträge und Simulationen werden ausgeschlossen; Wiederholung erzeugt keine Duplikate.
+- Additives Schema/Austauschformat 6 sichert historische Schätzungen mit; Exporte 2–5 bleiben importierbar. 244 Tests lokal und im NAS-Container sowie Browserprüfungen für neue Struktur, Klappzustand, 1.000-g-Standard und Annahmenanzeige erfolgreich. Historische Rückrechnung zunächst auf isolierter Kopie, dann produktiv für zwölf abgeschlossene Aufträge geprüft; ausschließlich separate Schätzungen ergänzt, ursprüngliche Daten unverändert.
+
 ## 2026-11-17 — Druckkosten mit eingefrorenen Rollenpreisen
 
 - Kaufpreis je physischer Rolle in Euro und optionale Preis-Bezugsmenge in Gramm. Ohne Bezugsmenge wird das Nenngewicht des Filamentprodukts verwendet; aktuelles Rest- oder Eröffnungsgewicht wird nicht als Kaufmenge geraten. Kostenlose Rollen mit Preis 0 und unbekannte Preise bleiben unterscheidbar. Bestehende Fremdwährungswerte werden ohne bewusste Euroeingabe beibehalten.

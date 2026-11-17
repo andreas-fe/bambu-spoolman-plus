@@ -11,7 +11,7 @@ def inventory(tmp_path):
     app=Flask(__name__);app.secret_key='test';register_inventory(app,path,True)
     client=app.test_client()
     assert client.post('/inventory/filaments/save',data={'name':'Gold','material':'PETG','empty_spool_weight_g':'210'}).status_code==302
-    assert client.post('/inventory/spools/save',data={'filament_id':'1'}).status_code==302
+    assert client.post('/inventory/spools/save',data={'filament_id':'1','initial_weight_g':''}).status_code==302
     return path,client
 
 
@@ -56,7 +56,7 @@ def test_delete_unused_and_protect_journal_and_product_references(inventory):
     assert client.post('/inventory/spools/1/delete',data={'confirm':'delete'}).status_code==302
     assert client.post('/inventory/filaments/1/delete',data={'confirm':'delete'}).status_code==302
     client.post('/inventory/filaments/save',data={'name':'Red'})
-    client.post('/inventory/spools/save',data={'filament_id':'1'})
+    client.post('/inventory/spools/save',data={'filament_id':'1','initial_weight_g':''})
     InventoryService(path).weigh_stock(operation_key='protected',spool_id=1,gross_grams=1000,tare_grams=200)
     assert client.post('/inventory/spools/1/delete',data={'confirm':'delete'}).status_code==400
     assert len(client.get('/api/inventory/spools').json)==1

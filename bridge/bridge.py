@@ -1372,7 +1372,7 @@ def storage_start(review):
 def storage_history(name):
     with store.connection() as db:
         rows=db.execute('SELECT j.id,j.filename,j.subtask_name,j.state,j.created_at,j.updated_at,j.cancelled,COALESCE(SUM(CASE WHEN d.status=\'DONE\' THEN d.grams ELSE 0 END),0) grams FROM jobs j LEFT JOIN deductions d ON d.job_id=j.id WHERE j.kind=\'PRINT\' GROUP BY j.id ORDER BY j.created_at DESC LIMIT 1000').fetchall()
-    return [{**dict(r),'cost_label':print_costs.summary(r['id'])['total_label']} for r in rows if storage_name(name) in (storage_name(r['filename']),storage_name(r['subtask_name']))][:30]
+    return [{**dict(r),'cost_label':print_costs.history_label(r['id'])} for r in rows if storage_name(name) in (storage_name(r['filename']),storage_name(r['subtask_name']))][:30]
 
 
 printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history))

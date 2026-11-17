@@ -75,6 +75,10 @@ class PrintCosts:
             old=[r['job_id'] for r in db.execute('SELECT job_id FROM job_costs WHERE ended_at IS NULL') if r['job_id']!=active_id]
         for job_id in old:self.stop(job_id)
 
+    def history_label(self,job_id):
+        result=self.summary(job_id)
+        return result['total_label']+(' (historische Rückrechnung)' if result['historical_estimate'] else '')
+
     def summary(self,job_id):
         with connection(self.path) as db:return summarize(db,job_id,self.clock())
 
@@ -94,7 +98,7 @@ def summarize(db,job_id,now):
     duration=max(0,(track['ended_at'] if track['ended_at'] is not None else now)-track['started_at']) if track else 0
     coverage=min(1,track['covered_seconds']/duration) if duration else 0
     complete=material_complete and electricity is not None and coverage>=1-1e-6 and track['ended_at'] is not None
-    return dict(job_id=job_id,name=job['subtask_name'] or job['filename'] or job_id[:8],state=job['state'],created_at=job['created_at'],
+    result=dict(historical_estimate=False,estimate_details=[],job_id=job_id,name=job['subtask_name'] or job['filename'] or job_id[:8],state=job['state'],created_at=job['created_at'],
                 material_label=eur(material) if priced else 'Nicht erfasst',material_complete=material_complete,priced_entries=priced,entries=len(entries),
                 energy_kwh=round(float(energy),5) if energy is not None else None,energy_label=(f'{float(energy):.3f}'.replace('.',',')+' kWh') if energy is not None else 'Nicht erfasst',
                 electricity_label=eur(electricity),rate=track['electricity_rate'] if track else None,coverage_percent=round(coverage*100,1),
@@ -102,9 +106,21 @@ def summarize(db,job_id,now):
                 note='Simulation · keine gebuchten Materialkosten' if job['dry_run'] else 'Stromkosten aus Leistungsmessungen geschätzt; fehlende Zeitabschnitte werden nicht hochgerechnet. Materialpreise gelten zum Buchungszeitpunkt.')
 
 
+    if not complete and not job['dry_run'] and job['state'] in ('DONE','CLOSED_NO_USAGE','CANCELLED_ZERO','FAILED','INTERRUPTED'):
+        saved=db.execute('SELECT estimate_json FROM job_cost_estimates WHERE job_id=?',(job_id,)).fetchone()
+        if saved:
+            estimate=json.loads(saved[0]);kwh=estimate['energy_kwh']
+            result.update(historical_estimate=True,estimate_details=estimate['notes'],estimate_created_at=estimate['created_at'],
+                          material_label=eur(estimate['material_eur']),material_complete=True,electricity_label=eur(estimate['electricity_eur']),
+                          total_label=eur(estimate['total_eur']),complete=True,energy_kwh=round(kwh,5),energy_label=f'{kwh:.3f}'.replace('.',',')+' kWh',rate=estimate['rate'],
+                          note='Historische Rückrechnung mit heutigen Preisen und ausgewiesenen Annahmen. Keine zusätzliche Bestandsbuchung.')
+    return result
+
+
+
 COST_PANEL=r'''<section class="card"><details class="diagnostics" id="cost-details"><summary>Druckkosten <span class="muted small">Material & Strom</span></summary><p class="muted small">Letzte 10 Druckaufträge. Preise je Rolle unter Filamente → Physische Spulen bearbeiten; Strompreis unter Einstellungen. Fehlende Preise oder Messungen bleiben unbekannt. Stromkosten sind eine Schätzung aus Leistungsmessungen.</p><div id="cost-rows">Wird beim Öffnen geladen …</div><button type="button" class="quiet" onclick="loadCosts()">Kosten aktualisieren</button></details></section><script>
-async function loadCosts(){const target=document.getElementById('cost-rows');try{const response=await fetch('/api/print-costs');const data=await response.json();if(!response.ok)throw Error('Kosten konnten nicht geladen werden.');target.replaceChildren();for(const row of data.entries){const article=document.createElement('article');article.className='summary-box';const title=document.createElement('strong');title.textContent=new Date(row.created_at).toLocaleString('de-DE')+' · '+row.name+' · '+row.state;const line=document.createElement('p');line.textContent='Material: '+row.material_label+(row.material_complete?'':' (Preise unvollständig)')+' · Strom: '+row.electricity_label+' · '+row.energy_label+' · Messabdeckung: '+row.coverage_percent+' %';const total=document.createElement('p');total.textContent='Gesamt: '+row.total_label+(row.complete?' (Schätzung)':'')+(row.active?' · Druck läuft':'');article.append(title,line,total);target.append(article)}if(!data.entries.length)target.textContent='Noch keine Druckaufträge.'}catch(e){target.textContent=e.message}}
+async function loadCosts(){const target=document.getElementById('cost-rows');try{const response=await fetch('/api/print-costs');const data=await response.json();if(!response.ok)throw Error('Kosten konnten nicht geladen werden.');target.replaceChildren();for(const row of data.entries){const article=document.createElement('article');article.className='summary-box';const title=document.createElement('strong');title.textContent=new Date(row.created_at).toLocaleString('de-DE')+' · '+row.name+' · '+row.state+(row.historical_estimate?' · Historische Rückrechnung':'');const line=document.createElement('p');line.textContent='Material: '+row.material_label+(row.material_complete?'':' (Preise unvollständig)')+' · Strom: '+row.electricity_label+' · '+row.energy_label+' · Messabdeckung: '+row.coverage_percent+' %';const total=document.createElement('p');total.textContent='Gesamt: '+row.total_label+(row.complete?' (Schätzung)':'')+(row.active?' · Druck läuft':'');article.append(title,line,total);if(row.historical_estimate){const details=document.createElement('details'),summary=document.createElement('summary'),note=document.createElement('p');summary.textContent='Annahmen der Rückrechnung anzeigen';note.textContent=row.note;details.append(summary,note);for(const text of row.estimate_details||[]){const p=document.createElement('p');p.className='muted small';p.textContent=text;details.append(p)}article.append(details)}target.append(article)}if(!data.entries.length)target.textContent='Noch keine Druckaufträge.'}catch(e){target.textContent=e.message}}
 document.getElementById('cost-details').addEventListener('toggle',()=>{if(document.getElementById('cost-details').open)loadCosts()});</script>'''
 
 
-COST_SETTINGS=r'''<section class="panel settings-width"><h2>Druckkosten</h2><form method="post" action="/settings/print-costs"><input type="hidden" name="csrf_token" value="{{token}}"><label>Strompreis (€/kWh)<input type="number" name="electricity_eur_per_kwh" min="0" max="100" step="0.0001" value="{{electricity_rate or ''}}" placeholder="Nicht hinterlegt"><small>Gesamter Arbeitspreis inklusive Abgaben. Leer bedeutet unbekannt; 0 bedeutet kostenlos. Gilt ab dem nächsten neu erkannten Druckauftrag.</small></label><p class="field-help">Materialpreise je Rolle unter Filamente → Physische Spulen bearbeiten. Während eines Drucks werden Tapo-Leistungsmessungen automatisch etwa alle 30 Sekunden erfasst, auch ohne geöffneten Browser. Stromkosten bleiben eine Schätzung; Messlücken werden ausgewiesen. Vorhandene historische Drucke werden nicht rückwirkend mit heutigen Preisen bewertet.</p><button>Strompreis speichern</button></form></section>'''
+COST_SETTINGS=r'''<section class="panel settings-width"><h2>Druckkosten</h2><form method="post" action="/settings/print-costs"><input type="hidden" name="csrf_token" value="{{token}}"><label>Strompreis (€/kWh)<input type="number" name="electricity_eur_per_kwh" min="0" max="100" step="0.0001" value="{{electricity_rate or ''}}" placeholder="Nicht hinterlegt"><small>Gesamter Arbeitspreis inklusive Abgaben. Leer bedeutet unbekannt; 0 bedeutet kostenlos. Gilt ab dem nächsten neu erkannten Druckauftrag.</small></label><p class="field-help">Materialpreise je Rolle unter Filamente → Physische Spulen bearbeiten. Während eines Drucks werden Tapo-Leistungsmessungen automatisch etwa alle 30 Sekunden erfasst, auch ohne geöffneten Browser. Stromkosten bleiben eine Schätzung; Messlücken werden ausgewiesen. Vorhandene historische Drucke werden nur bei ausdrücklich veranlasster Rückrechnung mit heutigen Preisen geschätzt und entsprechend gekennzeichnet.</p><button>Strompreis speichern</button></form></section>'''

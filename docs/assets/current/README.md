@@ -20,6 +20,7 @@ Stand: 17. November 2026. Die PNG-Dateien wurden mit einem Browser aus den aktue
 | light-products.png | Lesbare Tabellenaktionen und Sortierung im hellen Design |
 | spool-price.png | Euro-Kaufpreis und Bezugsmenge einer Beispielrolle |
 | cost-settings.png | Stromtarif für künftige Aufträge |
+| inventory-management.png | Zusätzliche Inventarverwaltung eingeklappt |
 | print-costs.png | Material-/Stromkosten mit Messabdeckung eines Beispieldrucks |
 | settings.png | Simulation, Zuordnung und deaktivierter Flusszuschlag |
 

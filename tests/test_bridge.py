@@ -704,7 +704,7 @@ def test_version_two_inventory_export_remains_restorable(bridge, tmp_path):
     apply_migrations(target)
     restore_inventory(target, exported)
     restored = export_inventory(target)
-    assert restored['version'] == 5
+    assert restored['version'] == 6
     for product in restored['tables']['filaments']:
         assert product.pop('empty_spool_weight_g') is None
         assert product.pop('notes') == ''

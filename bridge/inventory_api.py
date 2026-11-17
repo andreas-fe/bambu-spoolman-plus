@@ -163,7 +163,7 @@ def register_inventory(app, path, internal, catalog=None):
                             product = db.execute('SELECT empty_spool_weight_g FROM filaments WHERE id=?', (values['filament_id'],)).fetchone()
                             if product is not None:
                                 values['empty_spool_weight_g'] = product['empty_spool_weight_g']
-                        weight = request.form.get('initial_weight_g', '').strip()
+                        weight = request.form.get('initial_weight_g', '1000').strip()
                         weight = float(weight) if weight else None
                         if weight is not None and (not math.isfinite(weight) or weight < 0):
                             raise ValueError('Ungültiger Eröffnungsbestand.')

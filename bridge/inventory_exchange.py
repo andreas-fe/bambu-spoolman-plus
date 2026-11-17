@@ -4,7 +4,7 @@ from .inventory_db import SCHEMA_VERSION, connection
 
 TABLES = ('vendors', 'locations', 'filaments', 'spools', 'spool_tags', 'ams_assignments',
           'jobs', 'deductions', 'inventory_movements', 'consumption_entries', 'import_runs',
-          'settings', 'inventory_job_plans', 'runtime', 'job_costs')
+          'settings', 'inventory_job_plans', 'runtime', 'job_costs', 'job_cost_estimates')
 
 
 def export_inventory(path):
@@ -17,12 +17,15 @@ def export_inventory(path):
 
 
 def restore_inventory(path, snapshot):
-    if snapshot.get('format') != 'bambu-spoolman-plus' or snapshot.get('version') not in (2, 3, 4, SCHEMA_VERSION):
+    if snapshot.get('format') != 'bambu-spoolman-plus' or snapshot.get('version') not in (2, 3, 4, 5, SCHEMA_VERSION):
         raise ValueError('Nicht unterstütztes Austauschformat.')
     data = snapshot.get('tables')
     if isinstance(data,dict) and snapshot.get('version',0)<5:
         if data.get('job_costs'):raise ValueError('Kostendaten benötigen Austauschformat Version 5.')
         data={**data,'job_costs':[]}
+    if isinstance(data,dict) and snapshot.get('version',0)<6:
+        if data.get('job_cost_estimates'):raise ValueError('Historische Kostenschätzungen benötigen Austauschformat Version 6.')
+        data={**data,'job_cost_estimates':[]}
     if not isinstance(data, dict) or set(data) != set(TABLES):
         raise ValueError('Unvollständiger Export.')
     with connection(path) as db:
