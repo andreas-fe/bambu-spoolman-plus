@@ -36,6 +36,12 @@ class PreviewCache:
                 self.db.execute('DELETE FROM previews WHERE key=(SELECT key FROM previews ORDER BY accessed,key LIMIT 1)')
             self.db.commit()
     def remove(self,entry):
-        with self.lock:self.db.execute('DELETE FROM previews WHERE path_key=?',(self.path_key(entry),));self.db.commit()
+        with self.lock:
+            self.db.execute('DELETE FROM previews WHERE path_key=?',(self.path_key(entry),))
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='storage_models'").fetchone():self.db.execute('DELETE FROM storage_models WHERE path_key=?',(self.path_key(entry),))
+            self.db.commit()
     def clear(self):
-        with self.lock:self.db.execute('DELETE FROM previews');self.db.commit();self.db.execute('VACUUM')
+        with self.lock:
+            self.db.execute('DELETE FROM previews')
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='storage_models'").fetchone():self.db.execute('DELETE FROM storage_models')
+            self.db.commit();self.db.execute('VACUUM')

@@ -1,5 +1,15 @@
 # Änderungen
 
+## 2026-11-17 — Einklappbare Produkte und erster 3D-Druckwegprototyp
+
+- Filamentprodukte sind standardmäßig eingeklappt und merken sich ihren eigenen Browserzustand. Bearbeiten, Anlegen, Produktlinks und Speichern öffnen den Bereich automatisch; bewusstes Schließen entfernt überholte Bearbeitungslinks. Die zusätzliche Inventarverwaltung bleibt unabhängig einklappbar.
+- Bewusst nachladbare, dreh-/zoombare WebGL-Druckwegvorschau für die gewählte Modellplatte im Dateidialog. Maus, Touch, Tastatur und Zoom-/Resetbuttons; vollständig lokal ohne externe Bibliotheken oder Dienste. Vorschau startet keinen Druck und verändert keine Datei oder Filamentzuordnung.
+- G-Code wird ausschließlich gelesen: absolute/relative Koordinaten und Extrusion, Rückzüge, G92 und auswertbare T-Farbwechsel. Leerfahrten ausgeblendet; Bögen als gerade Verbindungen angenähert und ausdrücklich gekennzeichnet. Linien zeigen Druckwege, kein CAD-Modell und keine reale Düsenbreite.
+- Lange Bambu-Konfigurationskommentare werden speicherschonend übersprungen; tatsächliche Einzelbefehle bleiben auf 4 KiB begrenzt.
+- Begrenzte Verarbeitung (192 MiB entpackter G-Code, 3 Mio. Zeilen, 25 Sekunden Aufbereitung), bei Bedarf verteilte Vereinfachung auf maximal 60.000 Segmente statt Abschneiden des Modellendes. Abbruch bei Dialogschluss, Plattenwechsel oder über Abbruchbutton. Dateisystemsperre wird vor CPU-Aufbereitung freigegeben; keine Teilgeometrie im Cache.
+- Separater persistenter 3D-Cache: maximal 20 Modelle / 32 MiB / 30 Tage, getrennt nach Drucker, Datei, Plattenindex und Parser-Version. Explizites Leeren der App-Vorschaudaten entfernt Bilder und 3D-Daten; Druckdateien, Inventar und Buchungsdaten bleiben erhalten. Metadaten und 3D-Ergebnisse können sich nicht gegenseitig als Startfreigabe ersetzen.
+- 249 Tests lokal und im NAS-Container sowie Browserprüfungen für Darstellung, Rotation, Maus-/Tastatur-/Zwei-Finger-Zoom, Zurücksetzen, Cache-Wiederverwendung, Ressourcenfreigabe, Abbruch, Mobilansicht und Produkt-Klappzustand erfolgreich. Bestehender Detailabbruch und Druckstartdialog ebenfalls geprüft, einschließlich wieder freigegebener Druckprüfung nach 3D-Abbruch. Reale 3MF mit 5.060 Segmenten, identischer Cachetreffer und Abbruch eines größeren Transfers am A1 bestätigt; native Inventar- und Kostendaten unverändert.
+
 ## 2026-11-17 — Historische Kostenbeispiele und vereinfachte Filamentverwaltung
 
 - Neue Spulen starten im Formular und bei fehlendem Startgewichtsparameter mit 1.000 g. Bewusst leere Angaben bleiben unbekannt, 0 und andere Werte bleiben möglich; bestehende Rollen werden nicht geändert.

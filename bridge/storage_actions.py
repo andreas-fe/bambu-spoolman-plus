@@ -8,11 +8,13 @@ import threading
 import time
 from flask import request,jsonify
 from .storage_metadata import inspect_archive,MAX_ARCHIVE,METADATA_VERSION
+from .model_preview import build_model,cached_model,save_model
 
 
 def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,history_names=None):
     jobs={};reviews={};cancelled_views={};lock=threading.Lock()
     with cache.lock:
+        cache.db.execute('CREATE TABLE IF NOT EXISTS storage_models(key TEXT PRIMARY KEY,path_key TEXT,data BLOB,created REAL)')
         cache.db.execute('CREATE TABLE IF NOT EXISTS storage_metadata(key TEXT PRIMARY KEY,data TEXT,created REAL)');cache.db.commit()
     def cached(entry):
         with cache.lock:
@@ -33,7 +35,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                 try:stream.close()
                 except OSError:pass
     def worker(ticket,entry):
-        job=jobs[ticket];ftp=None;draft=None;acquired=False
+        job=jobs[ticket];ftp=None;draft=None;acquired=False;plate=job.get('plate')
         try:
             check(job)
             if not refresh_idle():raise ValueError('Dateidetails bitte im bestätigten Leerlauf laden.')
@@ -50,7 +52,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                 storage.checked(ftp,entry);check(job)
                 deadline=time.monotonic()+240;next_idle=time.monotonic()+15
                 from .metadata_draft import DraftCollector
-                draft=DraftCollector(lambda result:job.update(draft_metadata=result))
+                if plate is None:draft=DraftCollector(lambda result:job.update(draft_metadata=result))
                 ftp.voidcmd('TYPE I');check(job)
                 with ftp.transfercmd('RETR '+entry['path']) as stream:
                     job['_stream']=stream;check(job)
@@ -64,24 +66,35 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                             if not refresh_idle():raise ValueError('Drucker nicht mehr im Leerlauf. Übertragung gestoppt.')
                             next_idle=time.monotonic()+15;check(job)
                         if data.tell()+len(block)>min(MAX_ARCHIVE,entry['size']):raise ValueError('Dateigröße geändert oder Größenlimit erreicht.')
-                        data.write(block);job['received']=data.tell();draft.feed(block)
+                        data.write(block);job['received']=data.tell()
+                        if draft:draft.feed(block)
                     check(job)
                     if isinstance(stream,ssl.SSLSocket):stream.unwrap()
                     job.pop('_stream',None)
-                check(job);ftp.voidresp();draft.close();draft=None;check(job)
+                check(job);ftp.voidresp()
+                if draft:draft.close();draft=None
+                check(job)
                 if data.tell()!=entry['size']:raise ValueError('Druckarchiv unvollständig übertragen.')
-                storage.checked(ftp,entry);check(job);data.seek(0);result=inspect_archive(data);check(job)
+                storage.checked(ftp,entry);check(job);ftp.close();ftp=None;job.pop('_ftp',None);storage.lock.release();acquired=False
+                data.seek(0);metadata=inspect_archive(data);check(job)
+                if plate is not None:
+                    job['phase']='building';data.seek(0);result=build_model(data,plate,metadata,lambda:check(job))
+                else:result=metadata
+                check(job)
             with lock:
                 check(job)
-                with cache.lock:
-                    cache.db.execute('INSERT OR REPLACE INTO storage_metadata VALUES (?,?,?)',(cache.key(entry),json.dumps(result),time.time()))
-                    cache.db.execute('DELETE FROM storage_metadata WHERE created<?',(time.time()-30*86400,))
-                    while True:
-                        count,size=cache.db.execute('SELECT COUNT(*),COALESCE(SUM(length(data)),0) FROM storage_metadata').fetchone()
-                        if count<=100 and size<=16*1024*1024:break
-                        cache.db.execute('DELETE FROM storage_metadata WHERE key=(SELECT key FROM storage_metadata ORDER BY created LIMIT 1)')
-                    cache.db.commit()
-                job.update(state='done',metadata=result)
+                if plate is not None:
+                    save_model(cache,entry,plate,result);job.update(state='done',model=result)
+                else:
+                    with cache.lock:
+                        cache.db.execute('INSERT OR REPLACE INTO storage_metadata VALUES (?,?,?)',(cache.key(entry),json.dumps(result),time.time()))
+                        cache.db.execute('DELETE FROM storage_metadata WHERE created<?',(time.time()-30*86400,))
+                        while True:
+                            count,size=cache.db.execute('SELECT COUNT(*),COALESCE(SUM(length(data)),0) FROM storage_metadata').fetchone()
+                            if count<=100 and size<=16*1024*1024:break
+                            cache.db.execute('DELETE FROM storage_metadata WHERE key=(SELECT key FROM storage_metadata ORDER BY created LIMIT 1)')
+                        cache.db.commit()
+                    job.update(state='done',metadata=result)
         except Cancelled:job.update(state='cancelled')
         except ValueError as e:job.update(state='cancelled' if job['_cancel'].is_set() else 'error',error=str(e))
         except Exception:job.update(state='cancelled' if job['_cancel'].is_set() else 'error',error='Dateidetails konnten nicht gelesen werden. Verbindung und geslicte 3MF prüfen.')
@@ -117,6 +130,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
             for job in stop:interrupt(job)
             return jsonify(state='cancelled')
         except ValueError as e:return jsonify(error=str(e)),400
+    @app.post('/storage/model')
     @app.post('/storage/details')
     def storage_details():
         try:
@@ -125,19 +139,26 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
             if len(viewer)>128:raise ValueError('Ungültige Dialogkennung.')
             if viewer and viewer in cancelled_views:return jsonify(state='cancelled')
             if not entry['name'].lower().endswith('.3mf'):raise ValueError('Detaillierter Druckstart benötigt eine geslicte 3MF-Datei.')
-            data=cached(entry)
-            if data:return jsonify(state='done',metadata=data)
+            plate=None
+            if request.path=='/storage/model':
+                try:plate=int(request.form.get('plate',''))
+                except ValueError:raise ValueError('Modellplatte für die 3D-Vorschau auswählen.')
+                if not 1<=plate<=64:raise ValueError('Ungültige Modellplatte.')
+            data=cached_model(cache,entry,plate) if plate is not None else cached(entry)
+            if data:return jsonify(state='done',**({'model':data} if plate is not None else {'metadata':data}))
             with lock:
                 for key in list(jobs):
                     if time.monotonic()-jobs[key]['created']>900:jobs.pop(key)
                 if viewer and viewer in cancelled_views:return jsonify(state='cancelled')
                 key=cache.key(entry)
-                old=next((t for t,j in jobs.items() if j['key']==key and j['state']=='loading' and not j['_cancel'].is_set()),None)
+                old=next((t for t,j in jobs.items() if j['key']==key and j.get('plate')==plate and j['state']=='loading' and not j['_cancel'].is_set()),None)
                 if old:
                     jobs[old]['_viewers'].add(viewer)
                     return jsonify(state='loading',ticket=old),202
+                completed=sorted((t for t,j in jobs.items() if j['state']!='loading'),key=lambda t:jobs[t]['created'])
+                while len(jobs)>=32 and completed:jobs.pop(completed.pop(0),None)
                 if any(j['state']=='loading' and not j['_cancel'].is_set() for j in jobs.values()):raise ValueError('Eine Datei wird bereits untersucht. Bitte kurz warten.')
-                ticket=secrets.token_urlsafe(24);jobs[ticket]=dict(state='loading',key=key,created=time.monotonic(),received=0,total=entry['size'],_cancel=threading.Event(),_stopped=threading.Event(),_viewers={viewer})
+                ticket=secrets.token_urlsafe(24);jobs[ticket]=dict(state='loading',key=key,plate=plate,created=time.monotonic(),received=0,total=entry['size'],_cancel=threading.Event(),_stopped=threading.Event(),_viewers={viewer})
                 threading.Thread(target=worker,args=(ticket,entry),daemon=True).start()
             return jsonify(state='loading',ticket=ticket),202
         except ValueError as e:return jsonify(error=str(e)),400
@@ -145,7 +166,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
     def details_progress():
         with lock:job=jobs.get(request.args.get('ticket'))
         if not job or time.monotonic()-job['created']>900:return jsonify(error='Dateiprüfung abgelaufen. Bitte erneut öffnen.'),404
-        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),draft_metadata=job.get('draft_metadata'),error=job.get('error'))
+        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),draft_metadata=job.get('draft_metadata'),model=job.get('model'),phase=job.get('phase'),error=job.get('error'))
     @app.get('/api/storage/history')
     def storage_history():
         try:

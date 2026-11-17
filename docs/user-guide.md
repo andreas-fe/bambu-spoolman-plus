@@ -414,7 +414,7 @@ Im hellen Design behalten Tabellenaktionen und Sortierbuttons auch bei Hover und
 
 ### Vereinfachte Filamentverwaltung und Standardgewicht
 
-Die Spulenkarten sind die Hauptansicht. **Filamentprodukte** stehen darunter als eigener Bereich. Die zusätzliche tabellarische Spulenverwaltung, Hersteller und Lagerorte sind unter **Weitere Inventarverwaltung** zusammengefasst und zunächst eingeklappt. Der Klappzustand wird im Browser gespeichert. Karten-Bearbeitung, „Spule hinzufügen“, gespeicherte Datensätze und direkte Bereichslinks öffnen bei Bedarf den passenden Bereich. Die Tabellenansicht bleibt unter anderem zum Archivieren und Entfernen erhalten.
+Die Spulenkarten sind die Hauptansicht. **Filamentprodukte** stehen darunter als eigener, standardmäßig eingeklappter Bereich mit separater Browserpräferenz. Beim Anlegen/Bearbeiten und nach dem Speichern öffnet er sich automatisch. Die zusätzliche tabellarische Spulenverwaltung, Hersteller und Lagerorte sind unter **Weitere Inventarverwaltung** zusammengefasst und zunächst eingeklappt. Der Klappzustand wird im Browser gespeichert. Karten-Bearbeitung, „Spule hinzufügen“, gespeicherte Datensätze und direkte Bereichslinks öffnen bei Bedarf den passenden Bereich. Die Tabellenansicht bleibt unter anderem zum Archivieren und Entfernen erhalten.
 
 ![Zusätzliche Inventarverwaltung eingeklappt](assets/current/inventory-management.png)
 
@@ -430,3 +430,19 @@ Für die Laufzeit werden gespeicherte Messzeiten, verfügbare Slicerzeiten oder 
 
 Die Kostenübersicht kennzeichnet diese Einträge mit **Historische Rückrechnung**. Unter **Annahmen der Rückrechnung anzeigen** stehen die tatsächlich verwendeten Quellen und Ersatzwerte. Die Messabdeckung bleibt die echte Messabdeckung und wird durch eine Schätzung nicht auf 100 % gesetzt. Die Werte dienen als Anschauungsbeispiele; sie belegen keine tatsächlich historischen Kaufpreise oder Strommessungen.
 
+
+
+### 3D-Druckwegvorschau · erster Prototyp
+
+Unter **Druckerspeicher → Details & Drucken** zuerst die gewünschte Modellplatte auswählen und die Dateiprüfung abschließen lassen. **3D-Druckwegvorschau laden · Prototyp** liest auf Wunsch deren gespeicherten G-Code und zeigt die Extrusionswege räumlich. Es wird kein Druck gestartet. Erstes Laden benötigt gegebenenfalls nochmals den vollständigen Dateitransfer; nach erfolgreicher Aufbereitung ist die Geometrie im App-Cache verfügbar. Vorhandene Cachegeometrie benötigt keinen neuen Druckertransfer. Neue Transfers sind weiterhin nur im bestätigten Leerlauf möglich.
+
+- Ziehen mit Maus oder Finger dreht die Ansicht.
+- Mausrad, zwei Finger sowie die Buttons „Vergrößern“/„Verkleinern“ zoomen.
+- Die Pfeiltasten drehen bei fokussierter Grafik, Plus/Minus zoomen; „Ansicht zurücksetzen“ oder Home stellt die Ausgangsansicht wieder her.
+- „Laden abbrechen“, Schließen und Wechsel der Modellplatte brechen laufende Arbeit ab. Andere Dateizugriffe werden anschließend wieder freigegeben. Eine fehlerhafte oder abgebrochene 3D-Vorschau verhindert nicht die Nutzung des bisherigen eingebetteten Vorschaubilds.
+
+Der Prototyp zeigt **Druckwege aus dem geslicten G-Code**, kein schattiertes CAD-Modell. Leerfahrten werden ausgeblendet, Linien haben keine reale Extrusionsbreite. Die Darstellung enthält auch gedruckte Hilfsstrukturen und gegebenenfalls Start-/Reinigungslinien. Farben stammen aus auswertbaren Slicer-T-Befehlen; fehlende oder herstellerspezifische Werkzeugwechsel sind nicht garantiert korrekt zugeordnet. Sehr dunkle Linien werden für die Lesbarkeit aufgehellt. Bögen werden zunächst als gerade Verbindungen angenähert; ein sichtbarer Hinweis benennt dies.
+
+Für flüssige Bedienung werden große Geometrien gleichmäßig vereinfacht; das gesamte Ende der Datei wird trotzdem gelesen, statt nur die ersten Schichten zu zeigen. Die Anzeige nennt dargestellte und erkannte Segmente. Grenzen: 192 MiB entpackter G-Code, maximal drei Millionen Zeilen und 25 Sekunden Aufbereitung. Ungeeignete Dateien liefern eine verständliche Meldung. Die Gesamtarchivgrenze für den Transfer bleibt 128 MiB. WebGL muss im Browser verfügbar sein; andernfalls bleibt das gespeicherte Vorschaubild nutzbar.
+
+3D-Geometrie wird getrennt vom Inventar im App-Vorschaudatencache gespeichert: höchstens 20 Modelle, 32 MiB komprimierte Daten und 30 Tage. Dateigröße/-datum, Drucker, Plattenindex und Parser-Version gehören zur Identität. **App-Vorschaudaten leeren** löscht Vorschaubilder und 3D-Cache, keine Druckerdateien und keine Bestands- oder Kostendaten. Umbenennen oder Ersetzen kann eine neue 3D-Aufbereitung erforderlich machen.
