@@ -142,8 +142,8 @@ def test_details_then_models_reuse_one_fully_verified_download(tmp_path):
 @pytest.mark.parametrize('state,replies,expected,calls',[
     ('unconfirmed',[True,False,True],'done',3),
     ('unconfirmed',[True,False,False],'Leerlaufbestätigung fehlt',3),
-    ('active',[True,False],'Aktivität',2),
-    ('offline',[True,False],'unterbrochen',2),
+    ('active',[True,False],'Aktivität',1),
+    ('offline',[True,False],'unterbrochen',1),
 ])
 def test_busy_transfer_retries_missing_confirmation_but_stops_activity_and_offline(monkeypatch,state,replies,expected,calls):
     from types import SimpleNamespace
@@ -204,3 +204,30 @@ def test_large_model_http_compression_preserves_result_and_respects_negotiation(
     plain=client.get('/api/storage/details',query_string=dict(ticket=start['ticket']),headers={'Accept-Encoding':'gzip;q=0'})
     assert 'Content-Encoding' not in plain.headers and plain.json==result
     assert len(response.data)<len(plain.data)/2
+
+
+def test_started_read_uses_bounded_continuation_without_requiring_shutdown_freshness(monkeypatch):
+    from types import SimpleNamespace
+    import bridge.storage_actions as actions
+    clock=[100.];checks=[]
+    monkeypatch.setattr(actions,'time',SimpleNamespace(monotonic=lambda:clock[0],time=time.time))
+    data=archive('M83\nG1 X20 E1\n');ftp=FTP();ftp.size=len(data)
+    class Slow(FTPStream):
+        def recv(self,size):
+            if self.tell()==0:clock[0]+=45
+            return super().recv(size)
+    ftp.transfercmd=lambda cmd:Slow(data)
+    def idle():checks.append(1);return len(checks)==1
+    app=Flask(__name__);app.secret_key='test';register_storage(app,lambda:ftp,lambda n:None,idle,lambda s:None,read_state=lambda:'idle')
+    c=app.test_client();entry=c.get('/api/storage?folder=/').json['files'][0]
+    started=c.post('/storage/details',data=dict(file=entry['token'],viewer='continuation')).json
+    assert wait(c,started['ticket'])['state']=='done' and len(checks)==1
+
+
+def test_read_continuation_does_not_authorize_new_download():
+    ftp=FTP();calls=[]
+    def idle():calls.append(1);return False
+    app=Flask(__name__);app.secret_key='test';register_storage(app,lambda:ftp,lambda n:None,idle,lambda s:None,read_state=lambda:'idle')
+    c=app.test_client();entry=c.get('/api/storage?folder=/').json['files'][0]
+    started=c.post('/storage/details',data=dict(file=entry['token'],viewer='new')).json
+    assert wait(c,started['ticket'])['state']=='error' and len(calls)==2

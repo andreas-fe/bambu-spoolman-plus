@@ -45,10 +45,15 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                 except (OSError,ValueError):pass
                 try:stream.close()
                 except OSError:pass
-    def require_idle(job):
+    def require_idle(job,continuing=False):
         check(job)
+        state=read_state() if continuing and read_state else None
+        if state=='idle':return
+        if state in ('active','offline'):
+            raise ValueError('Drucker meldet Aktivität. Übertragung gestoppt.' if state=='active' else 'Druckerverbindung unterbrochen. Übertragung gestoppt.')
         if refresh_idle():return
         state=read_state() if read_state else 'unconfirmed'
+        if state=='idle':state='unconfirmed'  # New reads still require the strict fresh check.
         # Retry only absent confirmation. Known activity/offline must stop at once.
         if state=='unconfirmed':
             job['phase']='waiting_status';check(job)
@@ -88,7 +93,7 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
                         check(job)
                         if time.monotonic()>deadline:raise ValueError('Zeitlimit beim Laden der Dateidetails erreicht.')
                         if time.monotonic()>next_idle:
-                            require_idle(job)
+                            require_idle(job,continuing=True)
                             next_idle=time.monotonic()+15;check(job)
                         if data.tell()+len(block)>min(MAX_ARCHIVE,entry['size']):raise ValueError('Dateigröße geändert oder Größenlimit erreicht.')
                         data.write(block);job['received']=data.tell()

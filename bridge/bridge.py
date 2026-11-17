@@ -1313,11 +1313,12 @@ def storage_idle():
 
 
 def storage_read_state():
-    if mqtt_client is None or not mqtt_client.is_connected():return 'offline'
-    if printer_status.get('state') in ('RUNNING','PREPARE','PAUSE'):return 'active'
+    from bridge.printer_storage import transfer_state
+    connected=bool(mqtt_client and mqtt_client.is_connected())
+    if not connected:return 'offline'
     with store.connection() as db:
-        if db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING')").fetchone():return 'active'
-    return 'unconfirmed'
+        active=bool(db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING')").fetchone())
+    return transfer_state(printer_status,connected,active)
 
 
 def storage_context():

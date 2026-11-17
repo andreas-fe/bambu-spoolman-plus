@@ -321,3 +321,20 @@ def test_model_plate_names_and_bed_surfaces_are_separate_from_indices():
     assert describe_plate(2,{}, {})['bed_label']==''
     for invalid in (b'<config>',b'<!DOCTYPE config><config/>',b'<config>'+b' '*2097152):assert plate_settings(invalid)=={}
     assert plate_settings(b'<config><plate><metadata key="plater_id" value="2"/></plate><plate><metadata key="plater_id" value="2"/><metadata key="plater_name" value="Wrong"/></plate></config>')[2]=={}
+
+
+def test_read_only_continuation_window_keeps_poweroff_strict():
+    from bridge.printer_storage import transfer_state
+    from bridge.devices import safe_to_power_off
+    import time
+    now=time.time();status=dict(state='IDLE',state_seen_at=now-55)
+    assert transfer_state(status,True,now=now)=='idle' and not safe_to_power_off(status)
+    for state in ('IDLE','FINISH'):
+        assert transfer_state(dict(state=state,state_seen_at=now-90),True,now=now)=='idle'
+        assert transfer_state(dict(state=state,state_seen_at=now-90.1),True,now=now)=='unconfirmed'
+    assert transfer_state(dict(state='IDLE',state_seen_at=now+1),True,now=now)=='unconfirmed'
+    assert transfer_state(status,False,now=now)=='offline'
+    assert transfer_state(status,True,active_job=True,now=now)=='active'
+    for state in ('RUNNING','PREPARE','PAUSE'):
+        assert transfer_state(dict(state=state,state_seen_at=now),True,now=now)=='active'
+    assert transfer_state(dict(state='UNKNOWN',state_seen_at=now),True,now=now)=='unconfirmed'

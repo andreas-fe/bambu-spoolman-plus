@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-18 — Transferdiagnose und stabile Leseprüfung
+
+- Vergleichstests mit identischen Daten: näherer WLAN-Zugangspunkt, curl, TCP_QUICKACK, Empfangspuffer und AES-128-GCM brachten keinen relevanten Rohtransfergewinn gegenüber etwa 0,19 MiB/s. ChaCha20 wurde nicht ausgehandelt. Keine erfolglosen Transportänderungen übernommen, Verschlüsselung bleibt erhalten.
+- Reproduzierter Abbruch bei weiterhin IDLE und 48,6/54,6 Sekunden alten Zustandsmeldungen: Für das Fortsetzen reiner Lesevorgänge gilt jetzt ein separates, begrenztes 90-Sekunden-Fenster bei bestehender Verbindung und ohne aktiven Auftrag. Prüfung alle 15 Sekunden; Aktivität/Offline stoppen sofort bei dieser Prüfung, ohne Bestätigung nach Ablauf bleibt der Transfer gesperrt. Neue Downloads und alle schreibenden/steuernden Aktionen behalten ihre strengeren Prüfungen.
+- Messmethoden und Unterschiede zwischen Druckerdownload, erstmaliger Geometrieaufbereitung und Cacheantwort in eigener Leistungsdokumentation erläutert. Keine Zugangsdaten oder Modellarchive veröffentlicht.
+- 266 Tests lokal und im NAS-Container bestanden; neue Tests prüfen die Grenzen des Lesefensters, getrennte Abschaltprüfung, Aktiv-/Offline-Sperre und weiterhin frische Freigabe neuer Downloads. Vollsicherung und verlustfreier Testimport vor Aktivierung. Vollständiger realer 18,08-MiB-Download in 94,81 Sekunden mit identischer Prüfsumme und unveränderten nativen Daten bestätigt.
+
 ## 2026-11-18 — Kontrast und schnellere Modellvorschau
 
 - Automatischer kontrastreicher Viewer-Hintergrund anhand der Filamentfarben; manuelle Wahl Hell/Dunkel mit gespeicherter Browserpräferenz in beiden Dialogen.

@@ -15,6 +15,17 @@ FOLDERS=('/', '/cache', '/model')
 EXTENSIONS=('.3mf','.gcode')
 
 
+READ_IDLE_MAX_AGE=90
+
+def transfer_state(printer,connected,active_job=False,now=None):
+    """Bounded read-only continuation; never a power/print authorization."""
+    state=printer.get('state')
+    if not connected or state=='OFFLINE':return 'offline'
+    if active_job or state in ('RUNNING','PREPARE','PAUSE'):return 'active'
+    age=(time.time() if now is None else now)-printer.get('state_seen_at',0)
+    return 'idle' if state in ('IDLE','FINISH') and 0<=age<=READ_IDLE_MAX_AGE else 'unconfirmed'
+
+
 def safe_file(folder,name):
     if folder not in FOLDERS or not name or name in ('.','..') or any(c in name for c in '/\\\r\n\x00') or not name.lower().endswith(EXTENSIONS):
         raise ValueError('Ungültige Druckdatei.')
