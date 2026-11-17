@@ -8,7 +8,7 @@ from flask import request,jsonify
 from .storage_metadata import inspect_archive,MAX_ARCHIVE
 
 
-def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers):
+def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,history_names=None):
     jobs={};reviews={};lock=threading.Lock()
     with cache.lock:
         cache.db.execute('CREATE TABLE IF NOT EXISTS storage_metadata(key TEXT PRIMARY KEY,data TEXT,created REAL)');cache.db.commit()
@@ -25,6 +25,8 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers):
                 if not 0<entry['size']<=MAX_ARCHIVE:raise ValueError('Dateidetails unterstützen Druckarchive bis 128 MiB.')
                 with storage.connection() as ftp,tempfile.TemporaryFile() as data:
                     storage.checked(ftp,entry);deadline=time.monotonic()+240;next_idle=time.monotonic()+15
+                    from .metadata_draft import DraftCollector
+                    draft=DraftCollector(lambda result:job.update(draft_metadata=result))
                     def write(block):
                         nonlocal next_idle
                         if time.monotonic()>deadline:raise ValueError('Zeitlimit beim Laden der Dateidetails erreicht.')
@@ -32,8 +34,9 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers):
                             if not refresh_idle():raise ValueError('Drucker nicht mehr im Leerlauf. Übertragung gestoppt.')
                             next_idle=time.monotonic()+15
                         if data.tell()+len(block)>min(MAX_ARCHIVE,entry['size']):raise ValueError('Dateigröße geändert oder Größenlimit erreicht.')
-                        data.write(block);job['received']=data.tell()
-                    ftp.retrbinary('RETR '+entry['path'],write,blocksize=65536)
+                        data.write(block);job['received']=data.tell();draft.feed(block)
+                    try:ftp.retrbinary('RETR '+entry['path'],write,blocksize=65536)
+                    finally:draft.close()
                     if data.tell()!=entry['size']:raise ValueError('Druckarchiv unvollständig übertragen.')
                     storage.checked(ftp,entry);data.seek(0);result=inspect_archive(data)
                 with cache.lock:
@@ -70,11 +73,14 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers):
     def details_progress():
         with lock:job=jobs.get(request.args.get('ticket'))
         if not job or time.monotonic()-job['created']>900:return jsonify(error='Dateiprüfung abgelaufen. Bitte erneut öffnen.'),404
-        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),error=job.get('error'))
+        return jsonify(state=job['state'],received=job.get('received',0),total=job.get('total'),metadata=job.get('metadata'),draft_metadata=job.get('draft_metadata'),error=job.get('error'))
     @app.get('/api/storage/history')
     def storage_history():
         try:
-            entry=decode(request.args.get('file'));return jsonify(entries=handlers['history'](entry['name']) if handlers else [])
+            entry=decode(request.args.get('file'))
+            names=history_names(entry) if history_names else [entry['name']]
+            rows={row.get('id',json.dumps(row,sort_keys=True)):row for name in names for row in handlers['history'](name)} if handlers else {}
+            return jsonify(entries=sorted(rows.values(),key=lambda r:r.get('created_at',''),reverse=True)[:30])
         except ValueError as e:return jsonify(error=str(e)),400
     @app.get('/api/storage/start-context')
     def start_context():

@@ -60,11 +60,14 @@ from flask import Flask, Response, jsonify, redirect, render_template_string, re
 APP_VERSION = "v3.0.0-plus"
 APP_BUILD_TIME = "11.11.2026"
 
+from bridge.runtime_config import load_overrides,register_config,CONFIG_UI
+DEVICE_CONFIG_PATH=Path(os.getenv('DB_PATH','/app/data/bridge.sqlite3')).parent/'device-settings.json'
+load_overrides(DEVICE_CONFIG_PATH)
+
 PRINTER_IP = os.getenv("BAMBU_HOST", "").strip()
 ACCESS_CODE = os.getenv("BAMBU_ACCESS_CODE", "").strip()
 SERIAL = os.getenv("BAMBU_SERIAL", "").strip()
 SPOOLMAN_URL = os.getenv("SPOOLMAN_URL", "http://spoolman:8000").rstrip("/")
-SPOOLMAN_BROWSER_URL = os.getenv('SPOOLMAN_BROWSER_URL', SPOOLMAN_URL).rstrip('/')
 WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(os.getenv("WEB_PORT", "7913"))
 WEB_USERNAME = os.getenv("WEB_USERNAME", "").strip()
@@ -946,7 +949,7 @@ def plan_consumption(job: dict, weights: dict, filaments: dict, slots: dict, sto
             left -= amount
             if capacity is not None: remaining[sid] -= amount
             if slot is None:
-                reasons.append('Rechnerische Aufteilung auf passende Spoolman-Reservespule; physische Verwendung nicht bestätigt')
+                reasons.append('Rechnerische Aufteilung auf passende Bestandsreserve; physische Verwendung nicht bestätigt')
         if left > 0:
             slot, sid = pool[-1]
             if parts and parts[-1][1] == sid: parts[-1][2] += left
@@ -1291,6 +1294,7 @@ def storage_idle():
 
 
 def storage_context():
+    if app.config.get('DEVICE_RESTART_PENDING'):raise ValueError('Verbindungseinstellungen werden übernommen. Druckstart nach dem Neustart neu vorbereiten.')
     if DRY_RUN or not mqtt_client or not mqtt_client.is_connected() or not storage_idle():
         raise ValueError('Druckstart erfordert Live-Betrieb und bestätigten frischen Leerlauf.')
     if not printer_status.get('nozzle_diameter'):refresh_calibration_profiles()
@@ -1354,7 +1358,7 @@ def storage_history(name):
 printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history))
 
 
-register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,
+devices_busy=register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,
                  shutdown_job_guard=lambda job_id:auto_power.permitted(job_id))
 
 
@@ -1706,8 +1710,8 @@ def protect_requests():
         return None
     if WEB_USERNAME:
         auth = request.authorization
-        if not auth or not secrets.compare_digest(auth.username or '', WEB_USERNAME) or not secrets.compare_digest(auth.password or '', WEB_PASSWORD):
-            return Response('Anmeldung erforderlich.', 401, {'WWW-Authenticate': 'Basic realm="Bambu Bridge"'})
+        if not auth or not secrets.compare_digest((auth.username or '').encode(), WEB_USERNAME.encode()) or not secrets.compare_digest((auth.password or '').encode(), WEB_PASSWORD.encode()):
+            return Response('Anmeldung erforderlich.', 401, {'WWW-Authenticate': 'Basic realm="Bambu-Spoolman-Plus", charset="UTF-8"'})
     if request.method == 'POST':
         expected = session.get('csrf_token')
         if not expected or not secrets.compare_digest(request.form.get('csrf_token', ''), expected):
@@ -1736,7 +1740,6 @@ HTML_TEMPLATE = r"""
     """ + A1_VISUAL + r"""
   </div>
   <div class="status">
-    <div><span class="muted">Spoolman:</span> <strong id="spoolman">{{ 'Verbunden' if spoolman.connected else 'Nicht verbunden' }}</strong></div>
     <div><span class="muted">Drucker:</span> <span id="state" class="pill">{{ printer.state }}</span> <span id="progress">{{ printer.progress }}%</span></div>
     <div><span class="muted">Datei:</span> <strong id="subtask">{{ printer.subtask_name or '—' }}</strong></div>
     <div><span class="muted">Voraussichtliche Restzeit:</span> <strong id="remaining-time">{{printer|remaining_time}}</strong><div class="muted small">Schätzung des Druckers</div></div>
@@ -1843,7 +1846,6 @@ function formatRemaining(printer){if(printer.state==='FINISH')return 'Abgeschlos
 function formatDateTime(value){if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?value:new Intl.DateTimeFormat('de-DE',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(date)}
 function cell(row,val){const td=document.createElement('td');td.textContent=val??'';row.appendChild(td);}
 function refreshStatus(){fetch('/api/status').then(r=>r.json()).then(data=>{
- document.getElementById('spoolman').textContent=data.spoolman.connected?'Verbunden':'Nicht verbunden';
  document.getElementById('state').textContent=data.printer.state;
  if(data.ams)updateAMS(data.ams,data.ams_mapping,data.printer);
  const illustration=document.querySelector('.printer-illustration');if(illustration)illustration.classList.toggle('printing',data.printer.state==='RUNNING');
@@ -1904,14 +1906,13 @@ def index():
     session.setdefault("csrf_token", secrets.token_urlsafe(32))
     journal=journal_page()
     return render_ui(
-        HTML_TEMPLATE.replace("Spoolman", "Inventar") if INVENTORY_BACKEND == "internal" else HTML_TEMPLATE,
+        HTML_TEMPLATE,
         active='overview', title='Drucker & Verbrauch',
         version=APP_VERSION,
         material_family_pattern=MATERIAL_FAMILY_PATTERN,
         build_time=APP_BUILD_TIME,
         csrf_token=session["csrf_token"],
         printer=printer_status,
-        spoolman=spoolman_status,
         ams=ams_state,
         mapping=load_mapping(),
         mapping_jobs=job_mapping_forms(),
@@ -1919,7 +1920,6 @@ def index():
         spools=fetch_spoolman_spools(),
         deductions=journal['entries'],journal=journal,
         logs=list(log_buffer),
-        spoolman_url=SPOOLMAN_BROWSER_URL,
         dry_run=DRY_RUN,
         auto_match=AUTO_MATCH_FILAMENTS,
     )
@@ -2025,6 +2025,40 @@ def close_job_without_usage(job_id):
     return redirect(url_for('index'))
 
 
+def config_change_guard(values):
+    if printer_status.get('state') in ('RUNNING','PREPARE','PAUSE'):
+        raise ValueError('Verbindungen erst nach Druckende ändern.')
+    with queued_lock:
+        if queued_jobs:raise ValueError('Eine Auftragsprüfung läuft noch. Bitte kurz warten.')
+    if ams_write_lock.locked() or printer_storage.lock.locked() or devices_busy():
+        raise ValueError('Kamera schließen und laufende Geräte-/Dateizugriffe abwarten.')
+    if auto_power.status().get('enabled'):
+        raise ValueError('Automatisches Ausschalten vor der Konfigurationsänderung deaktivieren.')
+    with store.connection() as db:
+        if db.execute("SELECT 1 FROM jobs WHERE state IN ('RUNNING','PREPARING','FINISH_PENDING','CANCEL_PENDING','BOOKING')").fetchone():
+            raise ValueError('Ein Druckauftrag oder dessen Abrechnung ist noch aktiv.')
+        if values.get('BAMBU_SERIAL',SERIAL)!=SERIAL and db.execute("SELECT 1 FROM jobs WHERE state IN ('WAITING_METADATA','WAITING_MAPPING','RETRY','UNKNOWN')").fetchone():
+            raise ValueError('Offene Aufträge vor einem Wechsel des Druckers abschließen.')
+    if mqtt_client and mqtt_client.is_connected() and printer_status.get('state') in ('IDLE','FINISH'):
+        if not refresh_printer_status():raise ValueError('Aktuellen Druckerstatus vor dem Speichern prüfen.')
+
+
+def request_device_restart():
+    if not app.config.get('ALLOW_PROCESS_RESTART'):return
+    def restart_when_idle():
+        time.sleep(2)
+        while True:
+            try:
+                from bridge.runtime_config import read_overrides
+                config_change_guard(read_overrides(DEVICE_CONFIG_PATH))
+                os._exit(0)  # Docker restart policy starts with the saved private overrides.
+            except Exception:time.sleep(5)
+    threading.Thread(target=restart_when_idle,daemon=True).start()
+
+
+connection_settings=register_config(app,DEVICE_CONFIG_PATH,config_change_guard,request_device_restart)
+
+
 @app.route('/settings', methods=['GET', 'POST'])
 def app_settings():
     global DRY_RUN, AUTO_MATCH_FILAMENTS
@@ -2042,10 +2076,11 @@ def app_settings():
     with inventory_connection(DB_PATH) as db:
         option = db.execute("SELECT value_json FROM settings WHERE key='flow_calibration_allowance'").fetchone()
         mode=db.execute("SELECT value_json FROM settings WHERE key='flow_allowance_mode'").fetchone()
-    return render_ui(SETTINGS_PAGE, flow_mode=json.loads(mode['value_json']) if mode else 'always', flow_allowance=bool(option and json.loads(option['value_json']) is True), active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
+    return render_ui(SETTINGS_PAGE+CONFIG_UI,connections=connection_settings(),flow_mode=json.loads(mode['value_json']) if mode else 'always', flow_allowance=bool(option and json.loads(option['value_json']) is True), active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
 
 
 def main():
+    app.config['ALLOW_PROCESS_RESTART']=True
     threading.Thread(target=job_worker, daemon=True).start()
 
     for job_id in store.recoverable_jobs(): enqueue_job(job_id)
@@ -2095,7 +2130,7 @@ def main():
 
     def heartbeat():
         while True:
-            fetch_spoolman_spools()
+            if INVENTORY_BACKEND=='spoolman':fetch_spoolman_spools()
             time.sleep(60)
             if mqtt_client and mqtt_client.is_connected():
                 try: send_pushall(mqtt_client)

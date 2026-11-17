@@ -334,3 +334,27 @@ Im Journal werden positive Durchführungsmeldung, explizite Startanforderung und
 Unter Einstellungen gilt für neue Aufträge wahlweise die bisherige **Pauschale** oder **nur bei gemeldeter Flusskontrolle (Stufe 8)**. Auch im zweiten Modus bleiben die 2 g je positiver verwendeter Filamentposition eine Schätzung, keine vom Drucker gemessene Grammmenge. Bei ausgeschaltetem Verbrauchszuschlag wird weiterhin nichts zusätzlich gebucht. Bereits laufende Aufträge behalten ihre festgeschriebene Regel.
 
 Beim MQTT-Wiederanlauf werden leere AMS-Platzhaltermeldungen in der ersten Minute nicht als Rollenentnahme gewertet. Vollständige Angaben können sofort angezeigt werden; bleibt ein Schacht nach der Startphase tatsächlich leer, wird dessen Zuordnung bei einer folgenden Rückmeldung weiterhin gelöst.
+
+## Verbindungseinstellungen im lokalen Betrieb
+
+Unter **Einstellungen → Verbindungen & Zugangsdaten** lassen sich Drucker-IP beziehungsweise Hostname, LAN-Zugangscode, Seriennummer, Modell sowie Tapo-Adresse, Konto und Passwort pflegen. Dafür wird keine zusätzliche Anmeldung eingeführt. Eine bereits über die Serverkonfiguration aktivierte optionale Web-Anmeldung bleibt wirksam. Gemeint ist der achtstellige **LAN-Zugangscode** der Bambu-Schnittstelle; WLAN-SSID und WLAN-Passwort werden weiterhin am Drucker eingerichtet.
+
+Passwortfelder bleiben leer. Wer nur eine Adresse ändern möchte, lässt vorhandene Passwörter unverändert leer. Die Anwendung übernimmt dann deren bisherige Werte. Eine leere Tapo-Adresse deaktiviert die Steckdosenanbindung. Eine geänderte Seriennummer bezeichnet einen anderen Drucker: Alte AMS-Bindungen werden nicht still auf ihn übertragen.
+
+Nach der ausdrücklichen Leerlaufbestätigung wird die Konfiguration atomar in `device-settings.json` im persistenten Datenverzeichnis gespeichert, mit Dateimodus 0600. Der Docker-Dienst startet anschließend kontrolliert neu. Läuft ein Druck, eine Abrechnung, eine Kameraübertragung oder ein Dateizugriff, wird die Änderung abgelehnt beziehungsweise der Neustart bis zum Leerlauf zurückgestellt. Zugangsdaten erscheinen weder im normalen Filamentexport noch in Protokollen oder vorausgefüllten Passwortfeldern. Die Datei bleibt lokal; sie ist nicht verschlüsselt. Vollständige private Serversicherungen enthalten sie und sind entsprechend privat aufzubewahren.
+
+Gespeicherte Werte haben beim Start Vorrang vor den entsprechenden `.env`-Werten und alten Secret-Dateien. Für die erstmalige Installation gelten weiterhin die benötigten Basiswerte in der Serverkonfiguration. Ports, Datenpfade und Bestandsmodus bleiben dort; die GUI ändert keine Docker-Netzwerke und führt keinen Backendwechsel aus. Für einen Rückfall auf `.env`: Dienst stoppen, private Konfiguration sichern, deren Datei entfernen und den Dienst wieder starten.
+
+![Lokale Verbindungseinstellungen ohne zusätzliche Anmeldung – ausschließlich Beispieldaten](assets/current/connections.png)
+
+### Schnellere Vorbereitung großer Druckdateien
+
+Der Details-Dialog zeigt Optionen und Historie sofort. Soweit frühe Archiveinträge bereits Druckplatte und Filamente liefern, erscheinen diese während des Downloads als **vorläufige** Angaben. Eingestellte Optionen und gewählte Rollen bleiben beim Abschluss der Prüfung erhalten. Der Start bleibt gesperrt, bis die vollständigen Druckdaten geprüft sind; vorläufige Werte gelangen nicht in die Verbrauchsbuchung.
+
+Beim Referenz-A1 liegen die verbindlichen Druckdaten am Archivende, und dessen FTPS-Server unterstützt keine REST-Teilabrufe. Deshalb bleibt beim ersten, noch nicht zwischengespeicherten Aufruf die vollständige Übertragung erforderlich. Es wird kein 3D-Modell neu generiert. Erneute Aufrufe verwenden den vorhandenen Metadatencache. Bei anderen Archivlayouts ohne früh lesbare Angaben bleiben zumindest die Optionen sofort bedienbar.
+
+### Dateien umbenennen
+
+Im Druckerspeicher **Umbenennen …** wählen, den Namen ohne Dateiendung eingeben und bestätigen. Die bisherige Endung bleibt erhalten. Dateien werden innerhalb ihres bisherigen Verzeichnisses umbenannt; vorhandene Zielnamen und Dateien laufender/offener Aufträge werden abgelehnt. Die App prüft Datei und Leerlauf erneut und überschreibt keine vorhandenen Dateien.
+
+Bereits geladene Vorschaubilder und Metadaten werden für den neuen Namen übernommen. Die Historie berücksichtigt bekannte frühere Dateinamen; vorhandene Journalzeilen werden nicht umgeschrieben. Wie bisher können später erneut verwendete identische Dateinamen nicht zuverlässig als dieselbe physische Datei erkannt werden.

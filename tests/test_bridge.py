@@ -1512,3 +1512,26 @@ def test_startup_empty_trays_preserve_roles_until_full_ams_report(bridge):
     b.ams_boot_guard_until=0
     b.ams_state[0].update(available=False)
     b.record_ams_changes();assert b.load_mapping()['0'] is None
+
+
+def test_clean_local_settings_are_csrf_guarded_and_secrets_not_exported(bridge,monkeypatch):
+    b=bridge;monkeypatch.setenv('BAMBU_ACCESS_CODE','0'*8)
+    c=b.app.test_client();html=c.get('/settings').text
+    assert 'Bestandsverwaltung</h2>' not in html
+    assert '/settings/connections' in html and 'Web-Anmeldung einrichten' not in html
+    assert 'id="spoolman"' not in c.get('/').text
+    data=dict(BAMBU_HOST='192.0.2.51',TAPO_USERNAME='fixture-account',TAPO_PASSWORD='fixture-new-password',idle_confirm='yes')
+    assert c.post('/settings/connections',data=data).status_code==403
+    with c.session_transaction() as session:csrf=session['csrf_token']
+    assert c.post('/settings/connections',data=dict(data,csrf_token=csrf)).status_code==200
+    assert b.DEVICE_CONFIG_PATH.stat().st_mode&0o777==0o600
+    export=c.get('/inventory/export').text
+    assert data['TAPO_PASSWORD'] not in export and data['TAPO_USERNAME'] not in export
+
+
+def test_connection_changes_block_during_print_and_keep_original_file(bridge):
+    b=bridge;c=b.app.test_client();c.get('/settings')
+    with c.session_transaction() as session:token=session['csrf_token']
+    b.printer_status['state']='RUNNING'
+    r=c.post('/settings/connections',data=dict(BAMBU_ACCESS_CODE='0'*8,idle_confirm='yes',csrf_token=token))
+    assert r.status_code==409 and 'Druckende' in r.json['error'] and not b.DEVICE_CONFIG_PATH.exists()

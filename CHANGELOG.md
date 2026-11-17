@@ -1,5 +1,13 @@
 # Änderungen
 
+## 2026-11-17 — Direkte lokale Einstellungen und flüssigere Dateiverwaltung
+
+- Details-Dialog mit sofort bedienbaren Optionen und früher Anzeige vorläufiger Platten-/Filamentdaten. Vollständige Prüfung bleibt Startvoraussetzung; bereits gewählte Optionen und Rollen werden erhalten. Kein 3D-Neurendering, vorhandener Metadatencache bleibt wirksam.
+- Veraltete Bestandsverwaltungs-Karte und Inventar-Verbindungsanzeige entfernt; tote Vorlagenfelder, alte Bezeichnungen und ungenutzte interne Bestandsabfragen bereinigt.
+- Dateiumbenennung im bisherigen Verzeichnis mit Kollisions-/Auftragsschutz, Übernahme vorhandener Cachebilder und Metadaten sowie Historie über frühere Namen.
+- Drucker- und Tapo-Verbindungen direkt in den lokalen Einstellungen, ohne zusätzliche Anmeldung. Getrennte private Speicherung, keine Ausgabe gespeicherter Passwörter und keine Aufnahme in Filamentexporte; kontrollierte Übernahme ohne laufenden Druck. Bestehender Betriebsmodus bleibt erhalten.
+- 220 Tests lokal und im NAS-Container bestanden. Browserprüfungen für frühe Optionen, gesperrten vorläufigen Start, erhaltene Auswahl, Umbenennen, lokale Verbindungseinstellungen, Passwortmaskierung und Mobilansicht. FTPS-Umbenennen am A1 mit eigenen temporären Dateien geprüft.
+
 ## 2026-11-16 — Druckstart, Dateidetails und Flusserkennung
 
 - Geprüfter 3MF-Druckstart mit tatsächlicher Druckplatte, expliziter AMS-/Extern-Zuordnung, Optionen und Bestätigung der freien Druckplatte. Einmalige kurze Startprüfung, erneute Datei-/Zustandsprüfung, Fingerabdruck und Sperre bei unklarem Start; keine automatischen Wiederholungen.

@@ -243,6 +243,7 @@ def register_devices(app, host, access_code, printer, light_control=None, refres
         finally:
             switch_lock.release()
     app.register_blueprint(bp)
+    return lambda:camera_lock.locked() or switch_lock.locked()
 
 
 CAMERA_PAGE = r'''

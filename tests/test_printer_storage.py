@@ -166,3 +166,65 @@ def test_background_details_and_single_use_review_guard_file_change():
     ftp.size-=1;token=review()
     assert c.post('/storage/start',data=dict(review=token,confirm='start-print',bed_clear='yes')).json['confirmed']
     assert c.post('/storage/start',data=dict(review=token,confirm='start-print',bed_clear='yes')).status_code==409 and len(starts)==1
+
+
+def test_rename_preserves_cache_and_history_and_refuses_overwrite():
+    import json,time
+    source=io.BytesIO()
+    with zipfile.ZipFile(source,'w') as z:
+        z.writestr('Metadata/plate_1.png',b'\x89PNG\r\n\x1a\nexample')
+        z.writestr('Metadata/plate_1.gcode','G1 X0')
+        z.writestr('Metadata/slice_info.config','<config><plate><metadata key="index" value="1"/><filament id="1" type="PLA" used_g="1"/></plate></config>')
+    data=source.getvalue()
+    class Files:
+        def __init__(self):self.files={'Original.gcode.3mf':data,'Exists.gcode.3mf':data};self.renamed=[];self.transfers=0
+        def retrlines(self,command,callback):
+            for name,content in self.files.items():callback('-rw-r--r-- 1 a b '+str(len(content))+' Nov 16 10:00 '+name)
+        def retrbinary(self,command,write,blocksize=8192):self.transfers+=1;write(self.files[command[5:].split('/')[-1]])
+        def rename(self,a,b):self.files[b.split('/')[-1]]=self.files.pop(a.split('/')[-1]);self.renamed.append((a,b))
+        def quit(self):pass
+        def close(self):pass
+    ftp=Files();idle=[True];blocked=[False];app=Flask(__name__);app.secret_key='rename-test'
+    handlers=dict(history=lambda name:[dict(id='old-job',created_at='2026-01-01',state='DONE')] if name=='Original.gcode.3mf' else [],context=lambda:{},prepare=lambda *a:{},start=lambda *a:{})
+    register_storage(app,lambda:ftp,lambda name:'Protected' if blocked[0] else None,lambda:idle[0],lambda s:None,handlers=handlers)
+    c=app.test_client();entry=next(x for x in c.get('/api/storage?folder=/cache').json['files'] if x['name']=='Original.gcode.3mf')
+    ticket=c.post('/storage/details',data=dict(file=entry['token'])).json['ticket']
+    for _ in range(100):
+        response=c.get('/api/storage/details',query_string=dict(ticket=ticket)).json
+        if response['state']!='loading':break
+        time.sleep(.01)
+    assert response['state']=='done'
+    def rename(name):return c.post('/storage/rename',data=dict(file=entry['token'],name=name))
+    assert rename('Exists.gcode.3mf').status_code==409 and not ftp.renamed
+    for name in ('../bad.gcode.3mf','bad.gcode','bad\nname.gcode.3mf'):assert rename(name).status_code==409
+    idle[0]=False;assert rename('New.gcode.3mf').status_code==409
+    idle[0]=True;blocked[0]=True;assert rename('New.gcode.3mf').status_code==409
+    blocked[0]=False;assert rename('New.gcode.3mf').status_code==200
+    new=next(x for x in c.get('/api/storage?folder=/cache').json['files'] if x['name']=='New.gcode.3mf')
+    assert c.post('/storage/details',data=dict(file=new['token'])).json['state']=='done' and ftp.transfers==1
+    assert c.get('/api/storage/history',query_string=dict(file=new['token'])).json['entries'][0]['id']=='old-job'
+    assert len(ftp.renamed)==1
+
+
+def test_draft_does_not_enable_server_start_until_full_inspection():
+    import json,time,threading
+    source=io.BytesIO()
+    with zipfile.ZipFile(source,'w') as z:
+        z.writestr('Metadata/plate_3.json','{"filament_ids":[0]}')
+        z.writestr('Metadata/project_settings.config','{"printer_model":"Bambu Lab A1","filament_type":["PLA"],"filament_colour":["#FFFFFF"],"nozzle_diameter":["0.4"]}')
+        z.writestr('Metadata/plate_3.gcode','G1 X0\n'*20000)
+        z.writestr('Metadata/slice_info.config','<config><plate><metadata key="index" value="3"/><filament id="1" type="PLA" used_g="1"/></plate></config>')
+    content=source.getvalue();release=threading.Event();ftp=FTP();ftp.size=len(content);calls=[]
+    def transfer(command,write,blocksize=8192):write(content[:65536]);release.wait(3);write(content[65536:])
+    ftp.retrbinary=transfer
+    app=Flask(__name__);app.secret_key='draft-guard'
+    register_storage(app,lambda:ftp,lambda name:None,lambda:True,lambda s:None,handlers=dict(history=lambda n:[],context=lambda:{},prepare=lambda *a:(calls.append(True),dict(summary=['OK']))[1],start=lambda *a:{}))
+    c=app.test_client();entry=c.get('/api/storage?folder=/cache').json['files'][0];ticket=c.post('/storage/details',data=dict(file=entry['token'])).json['ticket']
+    try:
+        for _ in range(100):
+            d=c.get('/api/storage/details',query_string=dict(ticket=ticket)).json
+            if d.get('draft_metadata'):break
+            time.sleep(.01)
+        assert d['state']=='loading' and d['draft_metadata']['draft']
+        assert c.post('/storage/start-review',data=dict(file=entry['token'],choice='{}')).status_code==409 and not calls
+    finally:release.set()

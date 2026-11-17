@@ -61,13 +61,13 @@ class PrefixReader:
         self.pending = data + self.pending
 
 
-def streamed_thumbnail(receive, *, limit=MAX_TRANSFER, timeout=30):
+def streamed_entries(receive, *, select=image_name, stop_before=None, limit=MAX_TRANSFER, timeout=30):
     reader = PrefixReader(receive, limit, timeout)
     expanded = 0
     for _ in range(1000):
         signature = reader.read(4)
         if signature in (b'PK\x01\x02', b'PK\x05\x06'):
-            raise ValueError('Die Datei enthält kein unterstütztes eingebettetes Vorschaubild.')
+            return
         if signature != b'PK\x03\x04':
             raise ValueError('Das Druckarchiv enthält einen nicht unterstützten ZIP-Eintrag.')
         _, _, flags, method, _, _, expected_crc, compressed, size, namesize, extrasize = HEADER.unpack(signature + reader.read(26))
@@ -91,7 +91,10 @@ def streamed_thumbnail(receive, *, limit=MAX_TRANSFER, timeout=30):
             if not found:raise ValueError('ZIP64-Größen fehlen im Druckarchiv.')
         if flags & (1 | 64) or method not in (0, 8):
             raise ValueError('Verschlüsseltes oder nicht unterstütztes Druckarchiv.')
-        candidate = bool(image_name(name))
+        if stop_before and stop_before(name):
+            yield name,None
+            return
+        candidate = bool(select(name))
         image = bytearray()
         crc = actual_size = actual_compressed = 0
 
@@ -154,7 +157,12 @@ def streamed_thumbnail(receive, *, limit=MAX_TRANSFER, timeout=30):
             if desc != (crc, actual_compressed, actual_size):raise ValueError('Prüfsumme oder Größe des ZIP-Eintrags stimmt nicht.')
         elif not flags & 8 and (crc, actual_compressed, actual_size) != (expected_crc, compressed, size):
             raise ValueError('Prüfsumme oder Größe des ZIP-Eintrags stimmt nicht.')
-        if candidate:
-            if image.startswith(b'\x89PNG\r\n\x1a\n'):return bytes(image), 'image/png'
-            if image.startswith(b'\xff\xd8\xff'):return bytes(image), 'image/jpeg'
-    raise ValueError('Zu viele Einträge vor dem Vorschaubild im Druckarchiv.')
+        if candidate:yield name,bytes(image)
+    raise ValueError('Zu viele Einträge im Archivanfang.')
+
+
+def streamed_thumbnail(receive, *, limit=MAX_TRANSFER, timeout=30):
+    for name,image in streamed_entries(receive,limit=limit,timeout=timeout):
+        if image.startswith(b'\x89PNG\r\n\x1a\n'):return image,'image/png'
+        if image.startswith(b'\xff\xd8\xff'):return image,'image/jpeg'
+    raise ValueError('Die Datei enthält kein unterstütztes eingebettetes Vorschaubild.')

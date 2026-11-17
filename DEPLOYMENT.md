@@ -14,7 +14,7 @@ Nach Deployment `/health`, tatsächlichen Backend-/Simulationsmodus, Inventarsei
 
 ## Automatisierte Prüfung
 
-**211 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
+**220 Tests lokal und im NAS-Container bestanden.** Abgedeckt sind unter anderem Migration/Import, JSON-Roundtrip, Referenzen, Nebenläufigkeit, Abbruch, Wiederaufnahme, idempotente Buchung, Korrekturen, Entfernen archivierter Rollen, Gerätefehler, AMS-Vorschau und Einmalversuch, aktive/angeforderte Schachtsperre, Flusszuschlag und Abschaltregeln. Browserprüfungen bestätigen Rollenwahl, Fallback, Bestätigung/Abbruch, Einzelschachtaktionen und Desktop-/Mobilansicht.
 
 Temporäre Testdaten auf NAS möglichst im Arbeitsspeicher (`--tmpfs /tmp:rw,size=256m`) halten. Das vermeidet langsame SQLite-Schreibtests im Container-Layer. Niemals produktive Datenverzeichnisse in einen Testlauf mounten.
 
@@ -60,4 +60,16 @@ Nach Aktivierung des NAS-Containers wurden alle drei betroffenen Vorschauen übe
 
 Der Druckstart verwendet MQTT project_file im LAN-/Entwicklermodus mit einmaliger Prüfung, Filamentmapping nach Slicer-Position und frischer Dateiprüfung. Für A1 mini muss BAMBU_MODEL passend gesetzt sein. Ein tatsächlicher Start ist mit einer ausdrücklich ausgewählten Datei und freiem Druckbett gesondert zu prüfen. Die automatisierten Prüfungen verwenden simulierte Starts.
 
-Stand der erweiterten Speicherverwaltung: 211 Tests lokal und im NAS-Container bestanden. Vor Aktivierung wurden vollständige Sicherungen mit Prüfsummen und ein isolierter verlustfreier Inventar-Testimport geprüft. Eine echte vorhandene 3MF lieferte die tatsächliche geslicte Platte 3 mit zugehörigem Bild, Dauer, Filamentbedarf und Historie; auch der frische Startkontext und die einmalige Startvorschau wurden geprüft. Der eigentliche Startbefehl wurde nicht an der Hardware ausgelöst.
+Stand der erweiterten Speicherverwaltung: 220 Tests lokal und im NAS-Container bestanden. Vor Aktivierung wurden vollständige Sicherungen mit Prüfsummen und ein isolierter verlustfreier Inventar-Testimport geprüft. Eine echte vorhandene 3MF lieferte die tatsächliche geslicte Platte 3 mit zugehörigem Bild, Dauer, Filamentbedarf und Historie; auch der frische Startkontext und die einmalige Startvorschau wurden geprüft. Der eigentliche Startbefehl wurde nicht an der Hardware ausgelöst.
+
+## Lokale Gerätekonfiguration und einfache Bedienung
+
+Die neue `device-settings.json` liegt nur im persistenten Datenverzeichnis. Sie enthält sensible lokale Werte, wird mit 0600 und atomarem Austausch geschrieben und hat Vorrang vor den entsprechenden Umgebungswerten. Keine neue Anmeldung wird erzwungen. Vorhandene optionale WEB_USERNAME/WEB_PASSWORD-Werte werden nicht durch die GUI verändert. Konfigurationsänderungen werden ohne aktiven Druck und mit kontrolliertem Prozessneustart übernommen; die mitgelieferte Docker-Neustartregel ist dafür erforderlich. Infrastrukturwerte und das interne Bestandssystem bleiben unverändert. Native Inventarexporte enthalten keine Verbindungsgeheimnisse; vollständige private Daten-/Serversicherungen enthalten die Konfigurationsdatei.
+
+Das Umbenennen wurde am A1 ausschließlich mit eigenen temporären Kommentar-G-Code-Dateien geprüft: Vorhandener Zielname wurde abgelehnt und blieb unverändert, Umbenennen auf freien Namen erfolgreich; Testdateien wieder entfernt. Keine vorhandene Modelldatei wurde umbenannt oder gelöscht und kein Druck gestartet.
+
+Der frühe Details-Dialog liefert vorläufige Angaben aus begrenzten, prüfsummengeprüften Archiveinträgen. Der eigentliche Start bleibt von der vollständigen Konfiguration abhängig. Ohne REST-Unterstützung bleibt der erste vollständige Download nötig, die Vorbereitung wird jedoch nicht mehr vollständig dahinter verborgen.
+
+Die lokale Konfigurationsübernahme wurde zusätzlich in einem eigenen, vom echten Drucker getrennten Docker-Testcontainer mit künstlichen Werten end-to-end geprüft: Speichern ohne neue Anmeldung, tatsächlicher Prozess-/Containerneustart, erneut frei erreichbare Oberfläche, übernommene Werte, leere Passwortfelder und 0600-Datei. Die produktiven Zugangsdaten wurden dabei nicht verändert.
+
+Nach dem Deployment lieferte die frühe Metadatenerkennung aus einem realen Archiv mit 21.545.122 Bytes bereits nach 77.824 gelesenen Bytes und etwa 0,5 Sekunden einen vorläufigen Plattenvorschlag. Der eigentliche Start bleibt vollständig geprüften Daten vorbehalten. Die produktive Umbenennungsroute wurde nur mit einer eigenen temporären Testdatei geprüft und diese anschließend entfernt. Health und interner Live-Modus waren gesund; Bestände, AMS-Bindungen, Journal und Betriebseinstellungen blieben gegenüber der Sicherung unverändert.
