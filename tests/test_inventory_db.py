@@ -22,8 +22,8 @@ def test_schema_migration_preserves_existing_bridge_ledger(tmp_path):
             """
         )
 
-    assert apply_migrations(path) == 4
-    assert apply_migrations(path) == 4
+    assert apply_migrations(path) == 5
+    assert apply_migrations(path) == 5
 
     with connection(path) as db:
         assert dict(db.execute("SELECT * FROM jobs WHERE id='job-1'").fetchone()) == {
@@ -36,7 +36,7 @@ def test_schema_migration_preserves_existing_bridge_ledger(tmp_path):
             "spool_id": 924,
             "grams": 12.5,
         }
-        assert db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 4
+        assert db.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
 
 
 def test_spool_keeps_source_id_and_unknown_weights_as_unknown(tmp_path):

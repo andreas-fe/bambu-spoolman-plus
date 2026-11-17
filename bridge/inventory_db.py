@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _now() -> str:
@@ -211,6 +211,14 @@ def apply_migrations(path: str | Path) -> int:
                 db.execute('ALTER TABLE spools ADD COLUMN removed_at TEXT')
                 db.execute('INSERT INTO schema_migrations(version,applied_at) VALUES(4,?)', (_now(),))
                 current = 4
+            if current < 5:
+                db.execute('ALTER TABLE spools ADD COLUMN price_weight_g REAL CHECK(price_weight_g IS NULL OR price_weight_g > 0)')
+                db.execute('ALTER TABLE consumption_entries ADD COLUMN purchase_price_minor INTEGER')
+                db.execute('ALTER TABLE consumption_entries ADD COLUMN price_weight_g REAL')
+                db.execute('ALTER TABLE consumption_entries ADD COLUMN price_currency TEXT')
+                db.execute('CREATE TABLE job_costs(job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE RESTRICT,started_at REAL NOT NULL,ended_at REAL,electricity_rate TEXT,energy_wh REAL NOT NULL DEFAULT 0,covered_seconds REAL NOT NULL DEFAULT 0,last_sample_at REAL,last_power_w REAL,sample_count INTEGER NOT NULL DEFAULT 0)')
+                db.execute('INSERT INTO schema_migrations(version,applied_at) VALUES(5,?)', (_now(),))
+                current = 5
             if current > SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Datenbankschema {current} ist neuer als diese Anwendung ({SCHEMA_VERSION})."

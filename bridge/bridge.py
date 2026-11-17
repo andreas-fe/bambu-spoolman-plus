@@ -22,6 +22,7 @@ from bridge.ams_control import filament_payload, slot_write_reason
 from bridge.pressure_advance import calibration_choice
 from bridge.ams_selection import selection_fingerprint, spool_matches
 from bridge.auto_power import AutoPowerOff
+from bridge.print_costs import PrintCosts, COST_PANEL, COST_SETTINGS, decimal_input, summarize as cost_summary
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 import hashlib
 
@@ -540,6 +541,8 @@ with inventory_connection(DB_PATH) as db:
     db.execute('CREATE INDEX IF NOT EXISTS deductions_journal_time_idx ON deductions(created_at DESC,id DESC)')
     db.execute('CREATE INDEX IF NOT EXISTS movements_journal_time_idx ON inventory_movements(movement_type,created_at DESC,id DESC)')
 inventory_service = InventoryService(DB_PATH)
+print_costs = PrintCosts(DB_PATH)
+cost_wakeup = threading.Event()
 with inventory_connection(DB_PATH) as db:
     saved_settings = {r['key']: json.loads(r['value_json']) for r in db.execute("SELECT key,value_json FROM settings WHERE key IN ('dry_run','auto_match_filaments')")}
 DRY_RUN = bool(saved_settings.get('dry_run', DRY_RUN))
@@ -1113,6 +1116,14 @@ def record_ams_changes():
         log(f'AMS Slot {slot+1}: Wechsel von Material/Farbe oder Belegung erkannt. Spule für künftige Aufträge neu zuordnen.', logging.WARNING)
 
 
+def record_cost_event(job_id,started):
+    try:
+        if INVENTORY_BACKEND=='internal':
+            (print_costs.start if started else print_costs.stop)(job_id)
+            cost_wakeup.set()
+    except Exception:logger.warning('Druckkosten-Zeitpunkt nicht gespeichert; Drucker- und Verbrauchsverarbeitung laufen weiter.')
+
+
 def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload.decode("utf-8"))
@@ -1133,6 +1144,8 @@ def on_message(client, userdata, msg):
                 if 'mc_remaining_time' not in p:
                     printer_status.update(remaining_minutes=None, remaining_seen_at=0)
                 started_to_enqueue=started
+                if previous:record_cost_event(previous,False)
+                record_cost_event(started,True)
         # Mapping and file metadata can arrive in MQTT delta messages without a state.
         active_id = store.active_job_id()
         if active_id:
@@ -1181,13 +1194,19 @@ def on_message(client, userdata, msg):
         if started_to_enqueue:enqueue_job(started_to_enqueue)
         if state == "FINISH":
             j_id = store.finish_active_job(filename, subtask, ams_map, ams_map2)
-            if j_id: enqueue_job(j_id)
+            if j_id:
+                record_cost_event(j_id,False)
+                enqueue_job(j_id)
         elif state in ("FAILED", "CANCEL", "CANCELLED", "CANCELED", "STOPPED", "ERROR"):
             j_id = store.close_active_job('CANCEL_PENDING', f'Status: {state}')
-            if j_id: enqueue_job(j_id)
+            if j_id:
+                record_cost_event(j_id,False)
+                enqueue_job(j_id)
         elif state == "IDLE":
             j_id = store.close_active_job('CANCEL_PENDING', 'Unerwartet IDLE vor FINISH')
-            if j_id: enqueue_job(j_id)
+            if j_id:
+                record_cost_event(j_id,False)
+                enqueue_job(j_id)
     except Exception as exc:
         logger.exception("MQTT Fehler")
 
@@ -1353,7 +1372,7 @@ def storage_start(review):
 def storage_history(name):
     with store.connection() as db:
         rows=db.execute('SELECT j.id,j.filename,j.subtask_name,j.state,j.created_at,j.updated_at,j.cancelled,COALESCE(SUM(CASE WHEN d.status=\'DONE\' THEN d.grams ELSE 0 END),0) grams FROM jobs j LEFT JOIN deductions d ON d.job_id=j.id WHERE j.kind=\'PRINT\' GROUP BY j.id ORDER BY j.created_at DESC LIMIT 1000').fetchall()
-    return [dict(r) for r in rows if storage_name(name) in (storage_name(r['filename']),storage_name(r['subtask_name']))][:30]
+    return [{**dict(r),'cost_label':print_costs.summary(r['id'])['total_label']} for r in rows if storage_name(name) in (storage_name(r['filename']),storage_name(r['subtask_name']))][:30]
 
 
 printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history))
@@ -1870,6 +1889,9 @@ setInterval(refreshStatus,5000);
 </script>
 """
 
+HTML_TEMPLATE = HTML_TEMPLATE.replace('<section class="card" id="journal-panel">', COST_PANEL+'<section class="card" id="journal-panel">')
+
+
 def journal_page(before=None):
     rows=store.list_deductions(11,before=before)
     more=len(rows)>10
@@ -2057,6 +2079,24 @@ def request_device_restart():
     threading.Thread(target=restart_when_idle,daemon=True).start()
 
 
+@app.get('/api/print-costs')
+def print_costs_api():
+    with store.connection() as db:
+        jobs=db.execute("SELECT id FROM jobs WHERE kind='PRINT' ORDER BY created_at DESC,rowid DESC LIMIT 10").fetchall()
+        return jsonify(entries=[cost_summary(db,row['id'],time.time()) for row in jobs])
+
+
+@app.post('/settings/print-costs')
+def save_print_costs():
+    try:rate=decimal_input(request.form.get('electricity_eur_per_kwh'),maximum='100',places=4)
+    except ValueError as exc:
+        from bridge.ui import render_form_error
+        return render_form_error(str(exc))
+    with inventory_connection(DB_PATH) as db:
+        db.execute('INSERT INTO settings(key,value_json,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at',('electricity_eur_per_kwh',json.dumps(str(rate) if rate is not None else None),store.now()))
+    return redirect('/settings?saved=1')
+
+
 connection_settings=register_config(app,DEVICE_CONFIG_PATH,config_change_guard,request_device_restart)
 
 
@@ -2077,7 +2117,9 @@ def app_settings():
     with inventory_connection(DB_PATH) as db:
         option = db.execute("SELECT value_json FROM settings WHERE key='flow_calibration_allowance'").fetchone()
         mode=db.execute("SELECT value_json FROM settings WHERE key='flow_allowance_mode'").fetchone()
-    return render_ui(SETTINGS_PAGE+CONFIG_UI,connections=connection_settings(),flow_mode=json.loads(mode['value_json']) if mode else 'always', flow_allowance=bool(option and json.loads(option['value_json']) is True), active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
+    with inventory_connection(DB_PATH) as db:
+        rate=db.execute("SELECT value_json FROM settings WHERE key='electricity_eur_per_kwh'").fetchone()
+    return render_ui(SETTINGS_PAGE+COST_SETTINGS+CONFIG_UI,electricity_rate=json.loads(rate[0]) if rate else None,connections=connection_settings(),flow_mode=json.loads(mode['value_json']) if mode else 'always', flow_allowance=bool(option and json.loads(option['value_json']) is True), active='settings', title='Einstellungen', backend=INVENTORY_BACKEND, token=session['csrf_token'], dry_run=DRY_RUN, auto_match=AUTO_MATCH_FILAMENTS, saved=request.args.get('saved') == '1')
 
 
 def main():
@@ -2118,6 +2160,22 @@ def main():
             except Exception:logger.warning('Automatische Abschaltprüfung fehlgeschlagen; es wird nicht ausgeschaltet.')
             time.sleep(5)
     threading.Thread(target=auto_power_runner,daemon=True).start()
+
+    def cost_runner():
+        from bridge.devices import read_secret
+        while True:
+            try:
+                active_id=store.active_job_id()
+                print_costs.reconcile(active_id)
+                if active_id and INVENTORY_BACKEND=='internal' and read_secret('TAPO_HOST'):
+                    try:
+                        if not mqtt_client or not mqtt_client.is_connected() or not 0<=time.time()-printer_status.get('state_seen_at',0)<=90:raise ValueError('Kein aktueller Druckerstatus')
+                        measurement=app.extensions['read_tapo_power']()
+                    except Exception:measurement={}
+                    print_costs.sample(active_id,measurement)
+            except Exception:logger.warning('Druckkosten-Messung nicht verfügbar; Verbrauchsbuchung läuft unabhängig weiter.')
+            cost_wakeup.wait(30);cost_wakeup.clear()
+    threading.Thread(target=cost_runner,daemon=True).start()
 
     def retry_worker():
         while True:

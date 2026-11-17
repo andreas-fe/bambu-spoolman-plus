@@ -72,3 +72,6 @@ Automatisierte Tests dürfen keine produktiven Inventardaten mounten und keine e
 ### LAN-/Entwicklermodus
 
 Für direkte Material-/Farbübertragung muss der Drucker im LAN-only- und Entwicklermodus stehen. Nach einem Moduswechsel den aktuellen Zugangscode ausschließlich privat hinterlegen. Kamera-LAN-Freigabe gegebenenfalls gesondert prüfen. Die Anwendung führt keinen automatischen Moduswechsel durch und benötigt keine Veröffentlichung von Druckerkennungen oder Codes. [Bedienungsanleitung](user-guide.md#voraussetzungen-und-druckermodus).
+
+
+Kostenmigration: Vor Schema 5 vollständige NAS-/Datenbanksicherung und nativen Inventarexport anlegen. Kandidatenmigration und verlustfreien Rückimport in eine separate Datenbank prüfen. Schema 5 fügt ausschließlich Felder und die Tabelle `job_costs` hinzu; bestehende Mengen und Buchungen bleiben unverändert. Native Version-5-Exporte sichern auch Preis-Snapshots und Messstände; Versionen 2–4 werden ohne erfundene historische Kosten übernommen. Ein Rollback auf alten Anwendungscode erfordert die zugehörige vollständige Datenbanksicherung, da alter Code das neuere Schema bewusst ablehnt. Während einer laufenden Messung führt eine Unterbrechung zu ausgewiesenen Messlücken, nicht zu einer Hochrechnung.

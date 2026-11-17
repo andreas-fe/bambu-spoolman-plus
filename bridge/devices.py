@@ -212,6 +212,16 @@ def register_devices(app, host, access_code, printer, light_control=None, refres
         response.call_on_close(close_camera)
         return response
 
+    def read_power():
+        if not switch_lock.acquire(timeout=1):raise ValueError('Geräteabfrage läuft bereits.')
+        try:
+            if status_cache['data'] is not None and time.monotonic()-status_cache['at']<3:return dict(status_cache['data'])
+            result=switch.run(None)
+            status_cache.update(data=result,at=time.monotonic())
+            return result
+        finally:switch_lock.release()
+    app.extensions['read_tapo_power']=read_power
+
     @bp.route('/devices/tapo', methods=['GET', 'POST'])
     def tapo():
         action = None

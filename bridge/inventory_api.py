@@ -17,7 +17,7 @@ from .filament_catalog import FilamentCatalog, CatalogUnavailable
 FIELDS = {
     'vendors': ('name',),
     'filaments': ('vendor_id', 'name', 'material', 'subtype', 'color_name', 'color_json', 'diameter_mm', 'density_g_cm3', 'net_weight_g', 'article_number', 'empty_spool_weight_g', 'notes'),
-    'spools': ('filament_id', 'location_id', 'archived', 'notes', 'batch', 'empty_spool_weight_g'),
+    'spools': ('filament_id', 'location_id', 'archived', 'notes', 'batch', 'empty_spool_weight_g', 'price_weight_g'),
     'locations': ('name', 'notes'),
 }
 TABLES = ('vendors', 'locations', 'filaments', 'spools', 'spool_tags', 'ams_assignments', 'inventory_movements', 'consumption_entries', 'import_runs', 'settings', 'inventory_job_plans')
@@ -123,13 +123,17 @@ def register_inventory(app, path, internal, catalog=None):
                         value = None
                 elif key.endswith(('_g', '_mm', '_cm3')):
                     value = float(value) if value else None
-                    if value is not None and (not math.isfinite(value) or value < 0):
+                    if value is not None and (not math.isfinite(value) or (value < 0 or key=='price_weight_g' and value==0)):
                         raise ValueError('Gewicht und Maße müssen endlich und positiv sein.')
                 values[key] = value
             if kind in ('vendors', 'filaments', 'locations') and not values.get('name'):
                 raise ValueError('Name erforderlich.')
             if kind == 'spools' and not values.get('filament_id'):
                 raise ValueError('Jede physische Spule benötigt ein Produkt.')
+            if kind=='spools' and 'purchase_price_eur' in request.form:
+                from .print_costs import decimal_input
+                price=decimal_input(request.form['purchase_price_eur'])
+                values.update(purchase_price_minor=int(price*100) if price is not None else None,currency='EUR')
             now = _now()
             with connection(path) as db:
                 db.execute('BEGIN IMMEDIATE')
@@ -142,6 +146,10 @@ def register_inventory(app, path, internal, catalog=None):
                     existing = next((r for r in db.execute('SELECT id,name FROM vendors') if r['name'].casefold()==manufacturer.casefold()), None)
                     values['vendor_id'] = existing['id'] if existing else db.execute('INSERT INTO vendors(name,created_at,updated_at) VALUES (?,?,?)', (manufacturer, now, now)).lastrowid
                 ident = request.form.get('id', '').strip()
+                if ident and kind=='spools' and values.get('purchase_price_minor') is None:
+                    previous=db.execute('SELECT currency FROM spools WHERE id=?',(ident,)).fetchone()
+                    if previous and previous['currency'] not in (None,'EUR'):
+                        values.pop('purchase_price_minor',None);values.pop('currency',None)
                 if ident:
                     if kind == 'spools' and db.execute('SELECT 1 FROM spools WHERE id=? AND removed_at IS NOT NULL', (int(ident),)).fetchone():
                         raise ValueError('Diese Spule wurde bereits aus dem Inventar entfernt.')

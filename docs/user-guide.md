@@ -383,3 +383,30 @@ Separat zeigt der Dialog „Druckbettoberfläche laut Datei“, etwa **Textured 
 Das hilft auch bei älteren Dateien zu erkennen, für welche Oberfläche sie vorbereitet wurden. Es bestätigt weder die tatsächlich aufgelegte Platte noch die Oberfläche eines früheren Drucks, wenn die Datei zwischenzeitlich ersetzt wurde. Die Anzeige ändert keine Temperaturen und ersetzt kein erneutes Slicen für eine andere Oberfläche. Vor dem Start Datei und aufgelegte Platte vergleichen. Die Information erscheint ebenfalls in der Startbestätigung.
 
 Die Zuordnung und Bezeichnungen sind im offiziellen [Bambu-Studio-3MF-Leser](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/Format/bbs_3mf.cpp) und in dessen [Druckkonfiguration](https://github.com/bambulab/BambuStudio/blob/master/src/libslic3r/PrintConfig.cpp) nachvollziehbar. Bereits gecachte Dateidetails werden nach dieser Erweiterung einmal vollständig neu eingelesen; Vorschaubilder und Filamentdaten bleiben erhalten.
+
+
+### Druckkosten: Rollenpreis und Stromtarif
+
+Unter **Filamente → Physische Spulen → Bearbeiten** kann für jede Rolle der tatsächliche **Kaufpreis in Euro** hinterlegt werden. Dazu gehört die **Filamentmenge, auf die sich dieser Preis bezieht**, beispielsweise 19,99 € für 1.000 g. Leer lassen verwendet das Nenngewicht des Filamentprodukts. Das aktuelle Restgewicht und das ursprünglich eingetragene Startgewicht werden dafür nicht verwendet, weil eine Rolle beim Erfassen schon angebrochen sein kann. Ohne bekannten Preis oder bekannte Kaufmenge bleiben die Materialkosten unbekannt. Preis 0 bedeutet ausdrücklich kostenlos. Vorhandene Preise anderer Währungen werden nicht automatisch umgerechnet.
+
+![Kaufpreis einer Beispielrolle](assets/current/spool-price.png)
+
+Unter **Einstellungen → Druckkosten** wird der vollständige Arbeitspreis des Stromtarifs in **€/kWh** eingetragen, beispielsweise 0,35. Eine leere Angabe bedeutet unbekannt; 0 bedeutet kostenlos. Diese Einstellung ist vom Betriebsmodus getrennt und verändert keine Zuordnungs- oder Buchungsoptionen. Der Tarif wird beim Erkennen eines neuen Druckauftrags eingefroren. Eine spätere Tarifänderung gilt für nachfolgende Aufträge.
+
+![Stromtarif einstellen](assets/current/cost-settings.png)
+
+Die Startseite zeigt einen einklappbaren Bereich **Druckkosten** mit den letzten zehn Druckaufträgen, Datum, Status, Materialkosten, Stromkosten, erfasster Energie und Messabdeckung. Beim Öffnen oder über „Kosten aktualisieren“ wird der aktuelle Stand geladen. Auch die Dateihistorie im Druckerspeicher zeigt den Kostenstatus.
+
+![Kosten eines Beispieldrucks](assets/current/print-costs.png)
+
+Materialkosten ergeben sich aus der **gebuchten** Filamentmenge je Rolle × Kaufpreis / Preis-Bezugsmenge. Ein tatsächlich gebuchter Flusskontrollzuschlag zählt mit; bei einem abgebrochenen Druck gilt die gebuchte Teilmenge. Der Rollenpreis wird beim Buchen als Snapshot gespeichert. Wiederholen der Buchung belastet weder Bestand noch Kosten doppelt. Nachträgliches Ändern eines Rollenpreises berechnet abgeschlossene Buchungen nicht neu. Manuelle Bestandskorrekturen sind keine Druckverbrauchskosten.
+
+Die Stromerfassung arbeitet ohne geöffneten Browser: Bei aktiven Druckaufträgen wird die Tapo-Leistung etwa alle 30 Sekunden gelesen. Aus den Messpunkten wird der Energiebedarf geschätzt und mit dem eingefrorenen Tarif multipliziert. Startvorbereitung und Pausen gehören zur erfassten Auftragszeit, die Wartezeit nach dem Druckende nicht. Kurz fehlende Randabschnitte bis 45 Sekunden verwenden den benachbarten Leistungswert; lange Messlücken werden nicht aufgefüllt. Fehlender aktueller Druckerstatus, Tapo-Ausfälle oder ein Neustart können die Messabdeckung verringern. Dies ist eine **Schätzung aus Leistungsmessungen**, keine separate geeichte Energiemessung je Auftrag.
+
+Nur wenn der Auftrag vollständig gebucht ist, alle Rollenpreise vorliegen, ein Tarif bekannt ist und die Auftragszeit vollständig abgedeckt wurde, erscheint eine Gesamtsumme als Schätzung. Sonst steht „Unvollständig“; vorhandene Teilbeträge und die Messabdeckung bleiben sichtbar. Material- und Stromkomponente werden jeweils auf Cent gerundet; die Gesamtsumme addiert diese angezeigten Komponenten. Abschreibungen, Maschinenverschleiß, Arbeitszeit und Grundgebühren sind nicht enthalten.
+
+Historische Drucke vor Einführung der Funktion erhalten keine erfundenen Verbrauchs- oder Preisdaten. Es erfolgt keine nachträgliche Belastung von Spulen. Kosten von laufenden Simulationen werden nicht als gebuchte Druckkosten dargestellt.
+
+Im hellen Design behalten Tabellenaktionen und Sortierbuttons auch bei Hover und Tastaturbedienung kontrastreiche dunkle Schrift.
+
+![Filamentprodukte mit lesbaren Tabellenaktionen im hellen Design](assets/current/light-products.png)

@@ -704,7 +704,7 @@ def test_version_two_inventory_export_remains_restorable(bridge, tmp_path):
     apply_migrations(target)
     restore_inventory(target, exported)
     restored = export_inventory(target)
-    assert restored['version'] == 4
+    assert restored['version'] == 5
     for product in restored['tables']['filaments']:
         assert product.pop('empty_spool_weight_g') is None
         assert product.pop('notes') == ''
@@ -1535,3 +1535,48 @@ def test_connection_changes_block_during_print_and_keep_original_file(bridge):
     b.printer_status['state']='RUNNING'
     r=c.post('/settings/connections',data=dict(BAMBU_ACCESS_CODE='0'*8,idle_confirm='yes',csrf_token=token))
     assert r.status_code==409 and 'Druckende' in r.json['error'] and not b.DEVICE_CONFIG_PATH.exists()
+
+
+def test_cost_settings_are_separate_from_operating_mode_and_missing_is_unknown(bridge):
+    b=bridge;client=b.app.test_client();client.get('/settings')
+    with client.session_transaction() as session:token=session['csrf_token']
+    assert client.post('/settings/print-costs',data=dict(csrf_token=token,electricity_eur_per_kwh='0,3579')).status_code==302
+    with b.store.connection() as db:
+        assert json.loads(db.execute("SELECT value_json FROM settings WHERE key='electricity_eur_per_kwh'").fetchone()[0])=='0.3579'
+    assert b.DRY_RUN is True and b.AUTO_MATCH_FILAMENTS is False
+    assert client.post('/settings/print-costs',data=dict(csrf_token=token,electricity_eur_per_kwh='nan')).status_code==400
+    assert client.post('/settings/print-costs',data=dict(csrf_token=token,electricity_eur_per_kwh='')).status_code==302
+    with b.store.connection() as db:assert db.execute("SELECT value_json FROM settings WHERE key='electricity_eur_per_kwh'").fetchone()[0]=='null'
+    assert client.get('/api/print-costs').json=={'entries':[]}
+
+
+def test_cost_record_failure_never_blocks_print_completion(bridge,monkeypatch):
+    b=bridge;enable_internal(b);b.DRY_RUN=False
+    monkeypatch.setattr(b.print_costs,'start',Mock(side_effect=RuntimeError('cost unavailable')))
+    monkeypatch.setattr(b.print_costs,'stop',Mock(side_effect=RuntimeError('cost unavailable')))
+    b.on_message(None,None,SimpleNamespace(payload=json.dumps({'print':{'gcode_state':'RUNNING','gcode_file':'Demo.3mf'}}).encode()))
+    active=b.store.active_job_id();assert active and b.store.get_job(active)['state']=='RUNNING'
+    b.on_message(None,None,SimpleNamespace(payload=b'{"print":{"gcode_state":"FINISH"}}'))
+    assert b.store.active_job_id() is None and b.store.get_job(active)['state']=='FINISH_PENDING'
+
+
+def test_cost_snapshots_roundtrip_and_version_four_remains_importable(bridge,tmp_path):
+    from bridge.inventory_db import connection,apply_migrations
+    from bridge.inventory_exchange import export_inventory,restore_inventory
+    b=bridge;sid=enable_internal(b)
+    with connection(b.DB_PATH) as db:
+        db.execute("UPDATE spools SET purchase_price_minor=2000,price_weight_g=1000,currency='EUR' WHERE id=?",(sid,))
+    job=b.store.create_or_update_running_job('Demo.3mf','Demo',[0])
+    b.print_costs.start(job)
+    b.inventory_service.apply_consumption(operation_key='cost-roundtrip',job_id=job,source_key='one',spool_id=sid,grams=5)
+    b.print_costs.stop(job)
+    snapshot=export_inventory(b.DB_PATH);target=tmp_path/'restore-costs.sqlite3';b.Store(target);apply_migrations(target);restore_inventory(target,snapshot)
+    assert export_inventory(target)['tables']==snapshot['tables']
+    legacy=json.loads(json.dumps(snapshot));legacy['version']=4;legacy['tables'].pop('job_costs')
+    for row in legacy['tables']['spools']:row.pop('price_weight_g')
+    for row in legacy['tables']['consumption_entries']:
+        for name in ('price_weight_g','purchase_price_minor','price_currency'):row.pop(name)
+    target=tmp_path/'restore-v4.sqlite3';b.Store(target);apply_migrations(target);restore_inventory(target,legacy)
+    with connection(target) as db:
+        assert not db.execute('SELECT 1 FROM job_costs').fetchone()
+        assert db.execute('SELECT purchase_price_minor FROM consumption_entries').fetchone()[0] is None

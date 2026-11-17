@@ -1,5 +1,15 @@
 # Änderungen
 
+## 2026-11-17 — Druckkosten mit eingefrorenen Rollenpreisen
+
+- Kaufpreis je physischer Rolle in Euro und optionale Preis-Bezugsmenge in Gramm. Ohne Bezugsmenge wird das Nenngewicht des Filamentprodukts verwendet; aktuelles Rest- oder Eröffnungsgewicht wird nicht als Kaufmenge geraten. Kostenlose Rollen mit Preis 0 und unbekannte Preise bleiben unterscheidbar. Bestehende Fremdwährungswerte werden ohne bewusste Euroeingabe beibehalten.
+- Jede neue interne Verbrauchsbuchung speichert ihren damaligen Preis samt Bezugsmenge und Währung atomar mit der Buchung. Spätere Preisänderungen, Wiederholungen und Wiegekorrekturen verändern keine historischen Kosten. Materialkosten umfassen die tatsächlich gebuchte Menge inklusive eines gebuchten Flusszuschlags.
+- Separater Strompreis in €/kWh in den Einstellungen, eingefroren beim Erkennen des neuen Druckauftrags. Browserunabhängige Tapo-Abfrage etwa alle 30 Sekunden während eines aktiven Auftrags; gemeinsam mit der Gerätebedienung gesperrter Lesezugriff. Anfang/Ende wecken den Messdienst; Kostenfehler blockieren weder MQTT-Verarbeitung noch Verbrauchsbuchung.
+- Energie als gekennzeichnete Schätzung aus Leistungsmessungen: trapezförmige Integration zwischen frischen Werten, kurze Anfangs-/Endabschnitte maximal 45 Sekunden mit Randwert; keine Hochrechnung von Ausfällen, veralteten oder ungültigen Werten. Messabdeckung sichtbar, fehlende Preise/Intervalle verhindern eine vermeintlich vollständige Gesamtsumme. Summe entspricht den auf Cent gerundeten Komponenten.
+- Helles Design: Tabellenaktionen und Sortierbuttons verwenden eine explizite dunkle Textfarbe und passende Hover-/Aktivzustände. 192 aktive Button-/Zustandskombinationen in sechs Bereichen mit mindestens 4,5:1 Textkontrast geprüft, ebenso dunkles Design und Mobilansicht.
+- Einklappbare Kostenübersicht der letzten zehn Druckaufträge auf der Startseite; Kostenstatus auch in der dateibezogenen Historie. Ältere Drucke bleiben ohne nachträglich erfundene Preise oder Energieangaben.
+- Additives Inventarschema und Austauschformat Version 5, Verlustfreiheit einschließlich Preissnapshots und Messstand geprüft; bestehende Exporte der Versionen 2–4 bleiben importierbar. 241 Tests lokal und im NAS-Container sowie Browserkontrollen für Kostenzerlegung, Preiseingabe, Stromtarif und Mobilansicht erfolgreich. Vollsicherungen, verlustfreier Testimport und produktiver Healthstatus geprüft; reale Tapo-Leistung gelesen. Bestände und AMS-Zuordnungen erhalten, keine rückwirkenden Kosten erzeugt. Ein kompletter echter Druckzyklus mit Kostenmessung ist noch zu bestätigen.
+
 ## 2026-11-17 — Eindeutige Modellplatten und Druckbettoberflächen
 
 - Schließen bleibt auch bei sehr langen Dateinamen und in der Mobilansicht oben rechts; Dateititel darf umbrechen.

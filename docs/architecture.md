@@ -133,3 +133,10 @@ Private Gerätewerte werden außerhalb des Inventars in einer atomar geschrieben
 Ein begrenzter paralleler Archivleser kann bereits vor dem G-Code anhand geprüfter Projekt-/Platteneinträge einen vorläufigen Vorschlag liefern. Diese Daten entsperren keinen Start und werden nicht als Buchungsgrundlage übernommen. Die vollständige `slice_info.config` bleibt maßgeblich; eine fehlende Vorab-Erkennung lässt den bisherigen geprüften Vollimport unverändert weiterlaufen.
 
 Umbenennen nutzt RNFR/RNTO innerhalb des bisherigen Speicherbereichs, mit erneuter Datei-/Leerlaufprüfung, Kollisionsprüfung und Kontrolle des Ergebnisses. Metadaten und Bilder werden dem neuen Dateifingerabdruck zugeordnet; eine separate Aliasliste verbindet historische Namen. Buchungs- und Inventardaten werden nicht umgeschrieben. Der alte interne Verbindungsstatus und seine periodischen, sonst ungenutzten Bestandsabfragen entfallen.
+
+
+## Kosten-Snapshots und Auftragsenergie
+
+Inventarschema 5 ergänzt `spools.price_weight_g`, drei Preissnapshot-Spalten in `consumption_entries` sowie `job_costs`. Die Preisübernahme erfolgt innerhalb derselben Transaktion wie Bestandsänderung, Bewegung und Verbrauchseintrag. Der idempotente Wiederholungspfad ändert den Snapshot nicht. Preise werden als Centbetrag, Kostenberechnungen mit Decimal und Ausgabe auf Cent geführt; unbekannte und fremdwährungsbasierte Werte ergeben keine behaupteten Eurokosten.
+
+`print_costs.py` hält je Auftrag einen eingefrorenen Stromtarif, Beginn/Ende, kumulierte Energie, abgedeckte Dauer und den letzten Messpunkt. Der separate Messdienst verwendet denselben Tapo-Lesezugriff und dieselbe Sperre wie die Oberfläche; kein Netzwerkzugriff aus einer Inventartransaktion oder dem MQTT-Callback. Die Messung integriert frische, aufeinanderfolgende Leistungswerte mit begrenzten Abständen. Unterbrechungen löschen die Interpolationskontinuität. Geschlossene Messungen nehmen keine späteren Werte an. Kostenfehler werden von der Verbrauchsverarbeitung isoliert. Native Exporte enthalten die Snapshots und Messstände; Konfigurationsgeheimnisse bleiben ausgeschlossen.

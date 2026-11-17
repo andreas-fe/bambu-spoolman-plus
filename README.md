@@ -89,7 +89,7 @@ Nach FINISH werden die Grammwerte der ausgewählten Platte gebucht. Bei Abbruch 
 
 ## Validierung und bekannte Grenzen
 
-Stand 17. November 2026: **225 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
+Stand 17. November 2026: **241 Tests lokal und im NAS-Container bestanden**. Die Tests verwenden temporäre Daten und simulierte Geräte. Browserprüfungen decken Rollenwahl, Vorschau, Einzelschachtaktionen, aktive Schachtsperre und mobile Darstellung ab.
 
 Am Referenzsystem wurden Licht, manuelles Schalten und ein tatsächlicher AMS-Farbwechsel im Leerlauf geprüft; ursprüngliche Farbe und Bestandsbindung wurden danach wiederhergestellt. Ein echter Farbwechsel während eines laufenden Drucks nach Modusumstellung sowie ein vollständiger automatischer Abschaltzyklus der neuen Funktion sind noch nicht hardwarebestätigt. Das ist kein Freigabenachweis für andere Modelle oder Firmwarestände.
 
@@ -103,3 +103,5 @@ Am Referenzsystem wurden Licht, manuelles Schalten und ein tatsächlicher AMS-Fa
 - [Prüfstand](DEPLOYMENT.md)
 
 Private `.env`, SSH-Schlüssel, Passwörter, Druckerzugänge, Datenbanken, Logs und Inventarexporte niemals veröffentlichen. Die Anwendung gehört in ein vertrauenswürdiges lokales Netz; keine ungeschützte Internetfreigabe einrichten.
+
+Druckkosten: Kaufpreis je Rolle und Strompreis in den Einstellungen; eingefrorene Preise je Buchung, browserunabhängige Tapo-Leistungsmessung je Auftrag und eine Kostenübersicht mit sichtbarer Messabdeckung. Details und Grenzen stehen in der [Bedienungsanleitung](docs/user-guide.md#druckkosten-rollenpreis-und-stromtarif).

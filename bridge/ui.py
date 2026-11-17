@@ -84,7 +84,8 @@ th{font-size:12px;font-weight:650;color:var(--muted);white-space:nowrap}
 td{white-space:normal}
 td:first-child{font-weight:550}
 tbody tr:last-child td{border-bottom:0}
-.table-action{padding:7px 11px;min-height:35px;font-size:13px;background:var(--raised);border:1px solid var(--line)}
+.table-action{color:var(--text);padding:7px 11px;min-height:35px;font-size:13px;background:var(--raised);border:1px solid var(--line)}
+.table-action:hover,.table-action:active{background:var(--soft);color:var(--text);border-color:var(--accent)}
 .badge,.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:650;border-radius:7px;padding:4px 9px;background:#ffffff10}
 .badge.good{color:#9af0ce;background:#1d5b4350}
 .notice,.warn-banner{padding:15px 18px;border:1px solid #746331;background:#66532240;border-radius:12px;color:#f0dca6;margin:0 0 22px}

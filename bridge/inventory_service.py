@@ -140,6 +140,9 @@ class InventoryService:
                     (operation_key, job_id, source_key, spool_id, amount, movement_id,
                      legacy_deduction_id, created_at),
                 ).lastrowid
+                from .print_costs import freeze_price
+                price,weight,currency=freeze_price(db,spool_id)
+                db.execute('UPDATE consumption_entries SET purchase_price_minor=?,price_weight_g=?,price_currency=? WHERE id=?',(price,weight,currency,entry_id))
                 db.execute(
                     "UPDATE spools SET current_weight_g=?, last_used_at=?, updated_at=? WHERE id=?",
                     (after, created_at, created_at, spool_id),
