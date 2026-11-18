@@ -1,5 +1,13 @@
 # Änderungen
 
+## 2026-11-18 — Korrekte Plattenbilder und dunkle Formdetails
+
+- Vorschaubilder werden zur tatsächlich enthaltenen G-Code-Modellplatte gewählt; Projektübersichten und ungeslicte andere Platten ersetzen kein passendes Plattenbild mehr. Größere Plattenbilder bevorzugt, Standardeintrag in neu geprüften Metadaten und 3D-Auswahl zur Archiv-Reihenfolge passend.
+- Gezielte Versionierung des Bildcaches und der Bild-URLs ersetzt falsche alte Bilder. Bereits geprüfte Plattenmetadaten liefern passende Bilder ohne erneuten vollständigen Download; vorhandene 3D-Geometrie bleibt im Cache.
+- Dunkle Filamentfarben für erkennbare Innen- und Formdetails aufgehellt, Beleuchtung ergänzt und Standardansicht leicht erhöht. Darstellungs-Hinweis ergänzt; gespeicherte Farben und Druckdaten bleiben erhalten.
+- „Schließen“ in Bild-/3D-Vorschau und Dateidialog einheitlich unten rechts in erreichbarer Fußleiste.
+- 270 Tests lokal und im NAS-Container bestanden. Vier betroffene reale Archivanfänge lieferten die korrekten Plattenbilder nach nur 88–164 KiB; blaue und schwarze Horn-Geometrie sowie Desktop-/Mobilbedienung im Browser geprüft. Vollsicherung, verlustfreier Testimport und frischer Snapshot vor Aktivierung. Produktive Bildauslieferung der vier korrigierten Fälle und unveränderte native Inventar-/Zuordnungsdaten bestätigt.
+
 ## 2026-11-18 — Transferdiagnose und stabile Leseprüfung
 
 - Vergleichstests mit identischen Daten: näherer WLAN-Zugangspunkt, curl, TCP_QUICKACK, Empfangspuffer und AES-128-GCM brachten keinen relevanten Rohtransfergewinn gegenüber etwa 0,19 MiB/s. ChaCha20 wurde nicht ausgehandelt. Keine erfolglosen Transportänderungen übernommen, Verschlüsselung bleibt erhalten.

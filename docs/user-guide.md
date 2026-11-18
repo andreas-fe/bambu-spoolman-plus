@@ -458,3 +458,15 @@ Die tatsächliche erste FTPS-Übertragungsrate hängt weiterhin von Drucker, Spe
 Anregungen zu Bedienung und Darstellung stammen aus [3MFConsortium/3mfViewer](https://github.com/3MFConsortium/3mfViewer), [Polar3D/gcode-viewer](https://github.com/Polar3D/gcode-viewer) und [AheadWind/gcode-viewer.github.io](https://github.com/AheadWind/gcode-viewer.github.io). Es wurde kein Quellcode dieser Projekte eingebunden. Parser und Renderer sind eigene, lokal ausgelieferte Komponenten ohne CDN oder externe Viewer-Dienste.
 
 Messungen, bereits umgesetzte Beschleunigungen und die Abgrenzung zwischen Download, erster Aufbereitung und Cache stehen in [Ladezeit der Druckerspeichervorschau](performance.md).
+
+### Passendes Plattenbild und erkennbare dunkle Modelle
+
+Ein gespeichertes Druckarchiv kann eine Projektübersicht und Bilder mehrerer Modellplatten enthalten, obwohl nur Modellplatte 2 oder 3 tatsächlich geslict ist. Die Bildvorschau wählt deshalb das Bild zur enthaltenen G-Code-Platte. Eine Projektübersicht oder das Bild einer anderen Platte wird nicht als Ersatz für ein fehlendes geslictes Plattenbild angezeigt. Bei mehreren enthaltenen G-Code-Platten verwendet die schnelle Vorschau die erste ausführbare Platte im Archiv; neu eingelesene Dateidetails und der 3D-Dialog verwenden dieselbe Reihenfolge. Der Plattenwähler bietet weiterhin alle tatsächlich geslicten Platten an.
+
+Die App liest dafür nur den nötigen Archivanfang bis zum ersten G-Code-Eintrag. Bereits vollständig geprüfte Plattenmetadaten können das passende Bild direkt liefern. Wenn vorhanden und innerhalb der Bildgrenzen, wird das größere Plattenbild bevorzugt. Fehlt ein eindeutiges Bild, erscheint eine Meldung anstelle einer fremden Projektansicht.
+
+Alte Bildcacheeinträge werden durch eine neue Bildauswahl-Version ersetzt; die Bild-URLs sind ebenfalls versioniert. Ein Neuladen der Seite übernimmt die korrigierten Bilder. Der getrennte 3D-Geometrie- und Metadatencache bleibt nutzbar; ein Leeren aller App-Vorschaudaten ist dafür nicht nötig.
+
+Dunkle Filamentfarben werden im 3D-Betrachter für sichtbare Formdetails aufgehellt und durch ergänzende Beleuchtung unterstützt. Ein Hinweis benennt diese Darstellung. Die gespeicherten Filamentfarben und Druckdaten werden dadurch nicht geändert. Die Standardansicht blickt etwas stärker von oben in das Modell; zusätzlich steht „Oben“ bereit. Verdeckte Innenbereiche lassen sich durch Drehen oder mit dem Schichtregler untersuchen.
+
+„Schließen“ steht in Bild-/3D-Vorschau und Dateidialog einheitlich unten rechts. Der Fußbereich bleibt beim Scrollen erreichbar; Escape funktioniert weiterhin und bricht noch laufende Hintergrundarbeit wie bisher ab.

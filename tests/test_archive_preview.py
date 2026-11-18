@@ -77,3 +77,25 @@ def test_stored_descriptor_split_at_every_boundary():
             if first[0]:first[0]=False;return source.read(min(size,descriptor+offset))
             return source.read(min(size,7))
         assert streamed_thumbnail(receive)==(PNG,'image/png')
+
+
+def test_thumbnail_follows_sliced_plate_instead_of_first_project_picture():
+    data=io.BytesIO()
+    with zipfile.ZipFile(data,'w') as z:
+        z.writestr('Metadata/thumbnail.png',PNG+b'project')
+        z.writestr('Metadata/plate_1.png',PNG+b'wrong-unsliced-plate')
+        z.writestr('Metadata/plate_3_small.png',PNG+b'correct-small')
+        z.writestr('Metadata/plate_3.png',PNG+b'correct-full')
+        z.writestr('Metadata/plate_3.gcode',b'G1 X0\n'*100000)
+    source=io.BytesIO(data.getvalue())
+    assert streamed_thumbnail(source.read)==(PNG+b'correct-full','image/png')
+    assert source.tell()<=65536
+
+
+def test_missing_selected_plate_never_falls_back_to_other_model():
+    data=io.BytesIO()
+    with zipfile.ZipFile(data,'w') as z:
+        z.writestr('Metadata/thumbnail.png',PNG+b'project')
+        z.writestr('Metadata/plate_1.png',PNG+b'wrong')
+        z.writestr('Metadata/plate_2.gcode',b'G1 X0')
+    with pytest.raises(ValueError,match='geslicte Modellplatte'):streamed_thumbnail(io.BytesIO(data.getvalue()).read)

@@ -338,3 +338,38 @@ def test_read_only_continuation_window_keeps_poweroff_strict():
     for state in ('RUNNING','PREPARE','PAUSE'):
         assert transfer_state(dict(state=state,state_seen_at=now),True,now=now)=='active'
     assert transfer_state(dict(state='UNKNOWN',state_seen_at=now),True,now=now)=='unconfirmed'
+
+
+def test_legacy_wrong_thumbnail_is_repaired_from_verified_plate_without_transfer(tmp_path):
+    import base64,json,time
+    from bridge.preview_cache import PreviewCache
+    from bridge.storage_metadata import METADATA_VERSION
+    ftp=FTP();app=Flask(__name__);app.secret_key='repair';db_path=tmp_path/'preview.sqlite3'
+    register_storage(app,lambda:ftp,lambda name:None,lambda:False,lambda s:None,cache_path=db_path)
+    cache=PreviewCache(db_path);entry=dict(name='Example.3mf',path='/Example.3mf',size=ftp.size,modified='Nov 16 10:00')
+    # Date rendering is authoritative: get the real signed listing before seeding.
+    client=app.test_client();row=client.get('/api/storage?folder=/').json['files'][0]
+    entry['modified']=row['modified']
+    wrong=b'\x89PNG\r\n\x1a\nproject';correct=b'\x89PNG\r\n\x1a\nplate-three'
+    cache.db.execute('INSERT INTO previews VALUES (?,?,?,?,?,0)',(cache.key(entry),cache.path_key(entry),'image/png',wrong,time.time()))
+    metadata=dict(metadata_version=METADATA_VERSION,plates=[dict(index=3,preview='data:image/png;base64,'+base64.b64encode(correct).decode())])
+    cache.db.execute('INSERT INTO storage_metadata VALUES (?,?,?)',(cache.key(entry),json.dumps(metadata),time.time()));cache.db.commit()
+    updated=client.get('/api/storage?folder=/').json['files'][0]
+    assert 'v=2' in updated['preview_url']
+    assert client.get(updated['preview_url']).data==correct
+    assert client.post('/storage/preview',data=dict(file=updated['token'])).data==correct
+    assert cache.db.execute('SELECT COUNT(*) FROM storage_metadata').fetchone()[0]==1
+
+
+def test_default_plate_order_matches_streamed_first_executable_plate():
+    from bridge.storage_metadata import inspect_archive
+    data=io.BytesIO()
+    with zipfile.ZipFile(data,'w') as z:
+        z.writestr('Metadata/plate_1.png',b'\x89PNG\r\n\x1a\none')
+        z.writestr('Metadata/plate_3.png',b'\x89PNG\r\n\x1a\nthree')
+        z.writestr('Metadata/plate_3.gcode','G1 X0')
+        z.writestr('Metadata/plate_1.gcode','G1 X0')
+        z.writestr('Metadata/slice_info.config','<config><plate><metadata key="index" value="1"/></plate><plate><metadata key="index" value="3"/></plate></config>')
+    blob=data.getvalue();metadata=inspect_archive(io.BytesIO(blob))
+    assert [p['index'] for p in metadata['plates']]==[3,1]
+    assert streamed_thumbnail(io.BytesIO(blob).read)[0].endswith(b'three')

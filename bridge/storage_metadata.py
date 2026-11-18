@@ -89,7 +89,7 @@ def inspect_archive(stream):
                 filaments.append(dict(id=fid,material=f.get('type',''),color=f.get('color',''),grams=finite(f.get('used_g')),meters=finite(f.get('used_m'))))
             if len({f['id'] for f in filaments})!=len(filaments):raise ValueError('Doppelte Filamentnummer auf einer Druckplatte.')
             preview=None
-            for image_path in (f'Metadata/plate_{index}_small.png',f'Metadata/plate_{index}.png'):
+            for image_path in (f'Metadata/plate_{index}.png',f'Metadata/plate_{index}_small.png'):
                 if image_path not in names:continue
                 info=z.getinfo(image_path)
                 if info.file_size>256*1024 or image_bytes+info.file_size>2*1024*1024:continue
@@ -98,4 +98,5 @@ def inspect_archive(stream):
                     preview='data:image/png;base64,'+base64.b64encode(image).decode();image_bytes+=len(image);break
             plates.append(dict(**describe_plate(index,settings,project),outside=meta.get('outside')=='true',preview=preview,index=index,seconds=finite(meta.get('prediction')),grams=finite(meta.get('weight')),nozzle=meta.get('nozzle_diameters',''),model_id=meta.get('printer_model_id',''),filaments=filaments,objects=[o.get('name','') for o in plate.findall('object')],warnings=[w.get('msg','') for w in plate.findall('warning')]))
         if not plates or len({p['index'] for p in plates})!=len(plates):raise ValueError('Keine eindeutigen geslicten Druckplatten gefunden.')
+        plates.sort(key=lambda plate:names.index(f'Metadata/plate_{plate["index"]}.gcode'))
         return dict(metadata_version=METADATA_VERSION,filament_count=len(project.get('filament_type',[])) if isinstance(project.get('filament_type'),list) else 0,model=str(project.get('printer_model','')),profile=str(project.get('printer_settings_id','')),plates=plates)

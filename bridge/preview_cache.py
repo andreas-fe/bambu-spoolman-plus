@@ -18,18 +18,19 @@ class PreviewCache:
         self.db.execute('CREATE TABLE IF NOT EXISTS previews(key TEXT PRIMARY KEY,path_key TEXT,mime TEXT,data BLOB,created REAL,accessed REAL)');self.db.commit()
     def key(self,entry):return hashlib.sha256(json.dumps([self.namespace,entry],sort_keys=True).encode()).hexdigest()
     def path_key(self,entry):return hashlib.sha256((self.namespace+'|'+entry['path']).encode()).hexdigest()
+    def image_key(self,entry):return self.key(dict(entry,thumbnail_version=2))
     def contains(self,entry):
-        with self.lock:return bool(self.db.execute('SELECT 1 FROM previews WHERE key=? AND created>?',(self.key(entry),time.time()-self.ttl)).fetchone())
+        with self.lock:return bool(self.db.execute('SELECT 1 FROM previews WHERE key=? AND created>?',(self.image_key(entry),time.time()-self.ttl)).fetchone())
     def get(self,entry):
         with self.lock:
-            row=self.db.execute('SELECT data,mime FROM previews WHERE key=? AND created>?',(self.key(entry),time.time()-self.ttl)).fetchone()
-            if row:self.db.execute('UPDATE previews SET accessed=? WHERE key=?',(time.time(),self.key(entry)));self.db.commit()
+            row=self.db.execute('SELECT data,mime FROM previews WHERE key=? AND created>?',(self.image_key(entry),time.time()-self.ttl)).fetchone()
+            if row:self.db.execute('UPDATE previews SET accessed=? WHERE key=?',(time.time(),self.image_key(entry)));self.db.commit()
             return (bytes(row[0]),row[1]) if row else None
     def put(self,entry,data,mime):
         if len(data)>self.max_bytes:return
         with self.lock:
-            now=time.time();self.db.execute('DELETE FROM previews WHERE created<? OR (path_key=? AND key!=?)',(now-self.ttl,self.path_key(entry),self.key(entry)))
-            self.db.execute('INSERT OR REPLACE INTO previews VALUES (?,?,?,?,?,?)',(self.key(entry),self.path_key(entry),mime,data,now,now))
+            now=time.time();self.db.execute('DELETE FROM previews WHERE created<? OR (path_key=? AND key!=?)',(now-self.ttl,self.path_key(entry),self.image_key(entry)))
+            self.db.execute('INSERT OR REPLACE INTO previews VALUES (?,?,?,?,?,?)',(self.image_key(entry),self.path_key(entry),mime,data,now,now))
             while True:
                 count,size=self.db.execute('SELECT COUNT(*),COALESCE(SUM(length(data)),0) FROM previews').fetchone()
                 if count<=self.max_entries and size<=self.max_bytes:break

@@ -162,7 +162,28 @@ def streamed_entries(receive, *, select=image_name, stop_before=None, limit=MAX_
 
 
 def streamed_thumbnail(receive, *, limit=MAX_TRANSFER, timeout=30):
-    for name,image in streamed_entries(receive,limit=limit,timeout=timeout):
+    import re
+    plates={};fallback=None;total=0
+    def gcode(name):return bool(re.fullmatch(r'Metadata/plate_[0-9]+\.gcode',name,re.I))
+    def valid(image):
         if image.startswith(b'\x89PNG\r\n\x1a\n'):return image,'image/png'
         if image.startswith(b'\xff\xd8\xff'):return image,'image/jpeg'
-    raise ValueError('Die Datei enthält kein unterstütztes eingebettetes Vorschaubild.')
+    for name,image in streamed_entries(receive,stop_before=gcode,limit=limit,timeout=timeout):
+        if image is None:
+            index=int(re.search(r'plate_([0-9]+)',name,re.I)[1])
+            if index in plates:return plates[index][1]
+            raise ValueError('Die Datei enthält kein unterstütztes Vorschaubild für die geslicte Modellplatte; bitte Dateidetails laden.')
+        result=valid(image)
+        if not result:continue
+        total+=len(image)
+        if total>MAX_TRANSFER:raise ValueError('Gesammelte Vorschaubilder überschreiten die Größenbegrenzung.')
+        match=re.fullmatch(r'Metadata/plate_([0-9]+)(_small)?\.png',name,re.I)
+        if match:
+            index=int(match[1]);priority=1 if match[2] else 0
+            if index not in plates or priority<plates[index][0]:plates[index]=(priority,result)
+        elif fallback is None:fallback=result
+    # Unsliced archives can still have an image. Never substitute a project
+    # overview for a known sliced plate whose own image is missing.
+    if len(plates)==1:return next(iter(plates.values()))[1]
+    if not plates and fallback:return fallback
+    raise ValueError('Die Datei enthält kein unterstütztes eindeutiges Vorschaubild.')
