@@ -1483,7 +1483,8 @@ def assistant_power_status():
 register_assistant(app,status=assistant_printer_snapshot,stock=assistant_stock,
                    journal=assistant_journal,costs=assistant_costs,
                    preflight=assistant_preflight,files=assistant_files,
-                   power=assistant_power,power_status=assistant_power_status)
+                   power=assistant_power,power_status=assistant_power_status,
+                   web_login_configured=lambda:bool(WEB_USERNAME and WEB_PASSWORD))
 
 
 def auto_power_safe(fresh=False):
