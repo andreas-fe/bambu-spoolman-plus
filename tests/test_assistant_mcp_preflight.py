@@ -85,7 +85,7 @@ def test_preflight_reports_candidate_inventory_without_changing_mapping():
 def test_assistant_secret_missing_short_or_wrong_does_not_authorize(monkeypatch):
     from flask import Request
     from werkzeug.test import EnvironBuilder
-    builder = EnvironBuilder(path="/api/assistant/status", headers={"X-MCP-Bridge-Token": "a" * 32})
+    builder = EnvironBuilder(path="/api/assistant/status", headers={"X-MCP-Bridge-Token": "a" * 32}, environ_base={"REMOTE_ADDR": "127.0.0.1"})
     with Flask(__name__).request_context(builder.get_environ()):
         from flask import request
         monkeypatch.delenv("MCP_BRIDGE_TOKEN", raising=False)
@@ -96,6 +96,9 @@ def test_assistant_secret_missing_short_or_wrong_does_not_authorize(monkeypatch)
         assert not authorized_request(request)
         monkeypatch.setenv("MCP_BRIDGE_TOKEN", "a" * 32)
         assert authorized_request(request)
+    with Flask(__name__).test_request_context("/api/assistant/status", headers={"X-MCP-Bridge-Token": "a" * 32}, environ_base={"REMOTE_ADDR": "192.0.2.10"}):
+        from flask import request
+        assert not authorized_request(request)  # Token alone does not permit LAN access.
 
 
 def assistant_test_app():
