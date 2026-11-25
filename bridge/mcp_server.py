@@ -5,6 +5,7 @@ All requests use a dedicated long secret. Never bind an MCP TCP endpoint.
 """
 from __future__ import annotations
 import os
+from urllib.parse import urlsplit
 import requests
 from mcp.server.fastmcp import FastMCP
 
@@ -12,8 +13,13 @@ URL = os.getenv("MCP_BRIDGE_URL", "http://127.0.0.1:7913").rstrip("/")
 TOKEN = os.getenv("MCP_BRIDGE_TOKEN", "")
 if len(TOKEN) < 32:
     raise RuntimeError("MCP_BRIDGE_TOKEN must be at least 32 characters.")
-if not (URL.startswith("http://127.0.0.1:") or URL.startswith("http://localhost:")):
-    raise RuntimeError("Only loopback MCP bridge URLs are allowed; use a local sidecar/tunnel.")
+address = urlsplit(URL)
+if (address.scheme != "http" or address.hostname not in ("127.0.0.1", "localhost", "::1")
+        or address.username or address.password or address.path not in ("", "/")
+        or address.query or address.fragment or address.port is None):
+    raise RuntimeError("Only plain loopback MCP bridge URLs are allowed; use a local sidecar/tunnel.")
+http = requests.Session()
+http.trust_env = False  # Never send the bridge token to an inherited HTTP proxy.
 
 mcp = FastMCP("Bambu Spoolverwaltung", instructions=(
     "Read-only status, inventory, costs and conservative 3MF checks. "
@@ -25,7 +31,7 @@ mcp = FastMCP("Bambu Spoolverwaltung", instructions=(
 def call(method, path, **params):
     headers = {"X-MCP-Bridge-Token": TOKEN}
     try:
-        response = requests.request(method, URL + path, headers=headers,
+        response = http.request(method, URL + path, headers=headers,
                                     params=params if method == "GET" else None,
                                     json=params if method == "POST" else None,
                                     timeout=(3, 20))
