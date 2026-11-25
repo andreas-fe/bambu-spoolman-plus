@@ -27,7 +27,7 @@ def authorized_request(req, token=None):
                 secrets.compare_digest(supplied.encode(), configured.encode()))
 
 
-def register_assistant(app, *, status, stock, journal, costs, preflight, files, power):
+def register_assistant(app, *, status, stock, journal, costs, preflight, files, power, power_status):
     lock = threading.Lock()
     pending = {}
 
@@ -47,6 +47,17 @@ def register_assistant(app, *, status, stock, journal, costs, preflight, files, 
     @app.get("/api/assistant/status")
     def assistant_status():
         return jsonify(status())
+
+    @app.get("/api/assistant/power/status")
+    def assistant_power_status():
+        try:
+            result = power_status()
+            return jsonify(on=result.get("on"), power_w=result.get("power_w"),
+                           observed_at=result.get("observed_at"),
+                           today_energy_wh=result.get("today_energy_wh"),
+                           month_energy_wh=result.get("month_energy_wh"))
+        except Exception:
+            return jsonify(error="Steckdosenstatus nicht erreichbar."), 503
 
     @app.get("/api/assistant/stock")
     def assistant_stock():
