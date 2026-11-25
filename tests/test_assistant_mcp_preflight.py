@@ -104,7 +104,8 @@ def assistant_test_app():
     register_assistant(app, status=lambda: {"state": "IDLE"},
                        stock=lambda: [], journal=lambda: [], costs=lambda: [],
                        files=lambda: [], preflight=lambda *args: {"simulation": True},
-                       power=lambda value: calls.append(value) or {"on": value})
+                       power=lambda value: calls.append(value) or {"on": value},
+                       power_status=lambda: {"on": False, "power_w": 0.0})
     return app.test_client(), calls
 
 
@@ -114,6 +115,7 @@ def test_power_request_never_switches_before_web_approval():
     assert response.status_code == 202
     ident = response.json["request_id"]
     assert not calls
+    assert client.get("/api/assistant/power/status").json["on"] is False
     assert client.get("/api/assistant/power/result", query_string={"request_id": ident}).json["state"] == "pending"
     assert client.post("/assistant/power/decision", data={"request_id": ident, "decision": "approve", "confirm": "power-on"}).status_code == 400
     assert not calls
