@@ -135,3 +135,14 @@ def test_power_request_can_be_rejected_without_switching():
     assert client.post("/assistant/power/decision", data={"request_id": ident, "decision": "reject"}).json["state"] == "rejected"
     assert calls == []
     assert client.post("/api/assistant/power/request", json={"action": "toggle"}).status_code == 400
+
+
+def test_power_requires_configured_web_login():
+    app=Flask(__name__)
+    register_assistant(app,status=lambda:{},stock=lambda:[],journal=lambda:[],costs=lambda:[],
+                       files=lambda:[],preflight=lambda *args:{},
+                       power=lambda value: (_ for _ in ()).throw(AssertionError('Must not switch')),
+                       power_status=lambda:{'on':False})
+    client=app.test_client()
+    assert client.post('/api/assistant/power/request',json={'action':'on'}).status_code==403
+    assert client.post('/assistant/power/decision',data={'request_id':'x','decision':'approve','confirm':'power-on'}).status_code==403
