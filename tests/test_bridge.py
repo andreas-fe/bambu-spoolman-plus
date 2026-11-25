@@ -1599,6 +1599,7 @@ def test_assistant_is_default_deny_and_loopback_only(bridge, monkeypatch):
 def test_assistant_power_switch_requires_web_csrf_and_explicit_decision(bridge,monkeypatch):
     b=bridge
     monkeypatch.setenv('MCP_BRIDGE_TOKEN','a'*32)
+    b.WEB_USERNAME, b.WEB_PASSWORD = 'tester', 'test-password'
     headers={'X-MCP-Bridge-Token':'a'*32}
     switched=Mock(return_value={'on':False,'observed_at':123})
     b.app.extensions['assistant_tapo_switch']=switched
