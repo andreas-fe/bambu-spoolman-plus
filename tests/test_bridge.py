@@ -1609,14 +1609,14 @@ def test_assistant_power_switch_requires_web_csrf_and_explicit_decision(bridge,m
     assert data.status_code==202
     ident=data.json['request_id']
     switched.assert_not_called()
-    assert client.post('/assistant/power/decision',data={'request_id':ident,'decision':'approve','confirm':'power-off'}).status_code==403
+    assert client.post('/assistant/power/decision',data={'request_id':ident,'decision':'approve','confirm':'power-off'}).status_code==401
     switched.assert_not_called()
     with client.session_transaction() as sess:
         sess['csrf_token']='test-csrf'
-    decision=client.post('/assistant/power/decision',data={
+    decision=client.post('/assistant/power/decision',auth=('tester','test-password'),data={
         'request_id':ident,'decision':'approve','confirm':'power-off','csrf_token':'test-csrf'})
     assert decision.status_code==200 and decision.json['state']=='done'
     switched.assert_called_once_with(False)
-    assert client.post('/assistant/power/decision',data={
+    assert client.post('/assistant/power/decision',auth=('tester','test-password'),data={
         'request_id':ident,'decision':'approve','confirm':'power-off','csrf_token':'test-csrf'}).status_code==409
     switched.assert_called_once_with(False)
