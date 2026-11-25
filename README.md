@@ -6,6 +6,10 @@ Lokale Docker-Anwendung für Bambu Lab A1/A1 mini und AMS Lite: Filamentbestand 
 
 **Stand: 17. November 2026.** Alle aktuellen Screenshots wurden aus dieser Oberfläche mit künstlichen Beispieldaten erstellt. Sie enthalten keine echten Bestände oder Zugangsdaten. Die Funktionen und ihre Grenzen beschreibt die [ausführliche Bedienungsanleitung](docs/user-guide.md).
 
+## MCP, KI-Schaltanfragen und 3MF-Druckvorprüfung (optional)
+
+Der Entwicklungszweig ergänzt einen **lokalen MCP-stdio-Adapter** für Status, AMS, Filamentbestand, Journal und Druckkosten sowie eine konservative, rein lesende **3MF-/AMS-/Bestandsprüfung** im Druckdatei-Dialog. Eine KI darf Tapo-Ein-/Ausschalten nur **anfragen**: Der Mensch bestätigt die konkrete Aktion in „Steckdose & Energie“, und die bestehende Druckerleerlauf-Sperre bleibt erhalten. Kein automatischer Druckstart, keine direkte KI-Freigabe, keine öffentliche MCP-Schnittstelle. [Technische Anleitung und Sicherheitsmodell](docs/mcp-preflight.md).
+
 ## Funktionen
 
 - **Lokale Verbindungseinstellungen:** Druckeradresse, LAN-Zugangscode, Modell/Seriennummer und Tapo-Zugangsdaten direkt in der GUI pflegen; getrennte private Speicherung und kontrollierter Neustart ohne laufenden Druck.
