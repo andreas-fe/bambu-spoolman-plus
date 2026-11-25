@@ -5,6 +5,7 @@ cannot approve its own action: approval takes place in the existing web UI.
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import secrets
 import threading
@@ -18,7 +19,11 @@ LIFETIME = 120
 def authorized_request(req, token=None):
     configured = os.getenv("MCP_BRIDGE_TOKEN", "") if token is None else token
     supplied = req.headers.get("X-MCP-Bridge-Token", "")
-    return bool(len(configured) >= 32 and supplied and
+    try:
+        loopback = ipaddress.ip_address(req.remote_addr or "").is_loopback
+    except ValueError:
+        loopback = False
+    return bool(loopback and len(configured) >= 32 and supplied and
                 secrets.compare_digest(supplied.encode(), configured.encode()))
 
 
