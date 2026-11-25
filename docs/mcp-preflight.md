@@ -4,7 +4,7 @@ Stand: 25. November 2026. **Entwicklungsbranch, nicht produktiv freigegeben.**
 
 ## Sicherheitsmodell
 
-MCP läuft optional als separater **stdio-Prozess** und bietet keine öffentliche HTTP-Schnittstelle an. Die Bridge erhält interne, token-geschützte `/api/assistant/*`-Routen; alle anderen bisherigen Routen behalten Web-Anmeldung und CSRF-Prüfung. Die Bridge wird **niemals** direkt ins Internet freigegeben.
+MCP läuft optional als separater **stdio-Prozess** und bietet keine öffentliche HTTP-Schnittstelle an. Die Bridge erhält ausschließlich von Loopback akzeptierte, token-geschützte `/api/assistant/*`-Routen; alle anderen bisherigen Routen behalten Web-Anmeldung und CSRF-Prüfung. Die Bridge wird **niemals** direkt ins Internet freigegeben.
 
 `MCP_BRIDGE_TOKEN` muss mindestens 32 zufällige Zeichen enthalten. Fehlt der Wert, sind alle Assistenzrouten gesperrt. Der Token ist ein Geheimnis; nicht in Git oder Chatnachrichten speichern. Er erhält nur Zugriff auf eine kuratierte Auswahl von Status, Filamentbestand, letztem Journal, Druckkosten, Dateiliste und reiner Druckvorbereitung sowie auf das **Anfordern**, niemals selbständige Bestätigen, einer Schaltaktion. Nicht verfügbar sind direkte Druckstarts, Heizbefehle, AMS-Schreiben, Löschungen und unbestätigte Abschaltungen.
 
@@ -29,6 +29,7 @@ Die Bridge selbst muss mit demselben `MCP_BRIDGE_TOKEN` gestartet werden. Im Doc
 ## MCP-Werkzeuge
 
 - `printer_status`: bereinigter Drucker-/AMS-Status (keine Zugangsdaten oder Rohlogs)
+- `tapo_status`: Steckdosen-Zustand und Leistungs-/Energiewerte, nur lesend
 - `filament_stock`: physische Rollen, Material/Farbe, bekannte Restgewichte
 - `print_journal`: letzte Verbrauchsbuchungen
 - `print_costs`: bis zu zehn aktuelle Druckkosten-Zusammenfassungen
