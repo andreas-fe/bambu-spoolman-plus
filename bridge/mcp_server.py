@@ -37,8 +37,14 @@ def call(method, path, **params):
 
 @mcp.tool()
 def printer_status() -> dict:
-    """Current printer progress, AMS slots, connectivity and Tapo on/off status."""
+    """Current printer progress, AMS slots and connectivity (no switching)."""
     return call("GET", "/api/assistant/status")
+
+
+@mcp.tool()
+def tapo_status() -> dict:
+    """Read the current Tapo socket state and measured power (no switching)."""
+    return call("GET", "/api/assistant/power/status")
 
 
 @mcp.tool()
