@@ -103,7 +103,14 @@ def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namesp
             raise ValueError('Dateizugriff bereits belegt.')
         try:
             with storage.connection() as ftp:
-                files = [entry for folder in FOLDERS for entry in storage.listing(ftp, folder)]
+                files = []
+                for folder in FOLDERS:
+                    try:
+                        files.extend(storage.listing(ftp, folder))
+                    except ftplib.all_errors:
+                        if folder == '/':
+                            raise  # Root inaccessible: not a successful listing.
+                        # Optional /model is absent on some Bambu A1 firmware.
             return [dict(name=entry['name'], size=entry['size'],
                          modified=entry['modified'], token=signer().dumps(entry))
                     for entry in files if entry['name'].lower().endswith('.3mf')][:100]
