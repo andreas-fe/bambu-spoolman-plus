@@ -222,6 +222,23 @@ def register_devices(app, host, access_code, printer, light_control=None, refres
         finally:switch_lock.release()
     app.extensions['read_tapo_power']=read_power
 
+    def assistant_switch(action):
+        """Reuse precisely the live printer checks and isolated Tapo worker."""
+        if type(action) is not bool:
+            raise ValueError('Ungültige Schaltaktion.')
+        if not switch_lock.acquire(timeout=10):
+            raise ValueError('Steckdosenabfrage läuft bereits.')
+        try:
+            if action is False and not confirmed_idle():
+                raise ShutdownBlocked('Kein frischer Druckerleerlauf bestätigt.')
+            result = switch.run(action, lambda: safe_to_power_off(printer))
+            status_cache.update(data=None, at=0.0)
+            return result
+        finally:
+            switch_lock.release()
+
+    app.extensions['assistant_tapo_switch'] = assistant_switch
+
     @bp.route('/devices/tapo', methods=['GET', 'POST'])
     def tapo():
         action = None
@@ -273,6 +290,7 @@ async function light(action){const buttons=[...document.querySelectorAll('[data-
 POWER_PAGE = r'''
 <div class="page-heading"><div><div class="eyebrow">Tapo P110</div><h1>Steckdose & Energie</h1><p>Schalten, Leistung ablesen und Energieverbrauch verfolgen.</p></div><span class="badge" id="plug-state">Noch nicht abgefragt</span></div>
 {% if configured %}<section class="panel"><div class="section-heading"><h2>Steckdose bedienen</h2><div class="control-group"><button id="plug-on" onclick="tapo('on')">Einschalten</button><button class="danger" id="plug-off" onclick="tapo('off')">Ausschalten</button><button class="secondary" id="plug-refresh" onclick="readPower(true)">Status aktualisieren</button></div></div><p id="tapo-status" class="device-status" role="status">Status wird abgefragt …</p><p class="field-help">Vor dem Abschalten bestätigt der Drucker seinen aktuellen Leerlauf. Das Druckerlicht darf eingeschaltet bleiben.</p></section>
+<section class="panel" id="assistant-power-requests"><h2>KI-Schaltanfragen</h2><p class="field-help">ChatGPT/Claude kann nur eine Schaltung anfragen. Erst deine Bestätigung hier führt die Aktion aus. Ausschalten erfordert unmittelbar vorher bestätigten Leerlauf.</p><div id="assistant-power-list" role="status">Keine offenen Schaltanfragen.</div></section>
 <section class="panel"><div class="section-heading"><div><h2>Leistung & Verbrauch</h2><p>Messwerte direkt von deiner Steckdose.</p></div><span class="muted small" id="meter-updated">Noch kein Messwert</span></div><div class="meter-grid"><div class="meter-card primary"><span>Aktuelle Leistung</span><strong id="power-w">—</strong><small>Watt</small></div><div class="meter-card"><span>Verbrauch heute</span><strong id="energy-today">—</strong><small>kWh</small></div><div class="meter-card"><span>Verbrauch im Monat</span><strong id="energy-month">—</strong><small>kWh</small></div><div class="meter-card"><span>Laufzeit heute</span><strong id="runtime-today">—</strong><small>Stunden / Minuten</small></div></div><div class="live-controls"><label class="live-toggle"><input id="live-meter" type="checkbox" onchange="configureLive()"> Live-Status aktivieren</label><label>Intervall<select id="meter-interval" onchange="configureLive()"><option value="5">Alle 5 Sekunden</option><option value="10" selected>Alle 10 Sekunden</option><option value="30">Alle 30 Sekunden</option></select></label><span class="muted small" id="live-hint">Einzelabfrage · Live-Status ist aus</span></div><p class="field-help">Live-Abfragen pausieren automatisch, wenn dieser Reiter nicht sichtbar ist. Fehlende Messwerte bleiben als „—“ gekennzeichnet.</p></section>
 {% else %}<section class="panel"><h2>Steckdose einrichten</h2><p>Die Tapo-Steckdose ist noch nicht eingerichtet.</p></section>{% endif %}
 <script>
@@ -285,6 +303,41 @@ function schedulePoll(){clearTimeout(pollTimer);if(configured&&!document.hidden&
 function configureLive(){stopPoll();if(!configured)return;const live=document.getElementById('live-meter').checked;document.getElementById('live-hint').textContent=live?'Live-Status aktiv · pausiert bei ausgeblendeter Seite':'Einzelabfrage · Live-Status ist aus';if(live&&!document.hidden)readPower()}
 async function readPower(manual=false){if(manual)actionError=false;if(!configured||pollBusy||actionBusy||document.hidden)return;clearTimeout(pollTimer);pollBusy=true;pollController=new AbortController();setButtons();try{const response=await fetch('/devices/tapo',{cache:'no-store',signal:pollController.signal});const data=await response.json();if(!response.ok)throw Error(data.error||'Abfrage fehlgeschlagen.');displayStatus(data);if(!actionError)document.getElementById('tapo-status').textContent=data.on?'Steckdose eingeschaltet.':'Steckdose ausgeschaltet.'}catch(error){if(error.name!=='AbortError')document.getElementById('tapo-status').textContent=error.message+' Letzte Messwerte werden nicht als neue Werte ausgegeben.'}finally{pollBusy=false;pollController=null;setButtons();if(refreshPending&&!actionBusy){refreshPending=false;readPower()}else schedulePoll()}}
 async function tapo(action){if(actionBusy||!configured)return;stopPoll();actionBusy=true;actionError=false;setButtons();const status=document.getElementById('tapo-status');status.textContent=action==='off'?'Leerlauf wird am Drucker geprüft …':'Steckdose wird eingeschaltet …';try{const response=await fetch('/devices/tapo',{method:'POST',body:new URLSearchParams({action,csrf_token:{{token|tojson}}})});const data=await response.json();if(!response.ok)throw Error(data.error||'Schalten fehlgeschlagen.');displayStatus(data);status.textContent=data.on?'Steckdose eingeschaltet.':'Steckdose ausgeschaltet.'}catch(error){actionError=true;status.textContent=error.message}finally{actionBusy=false;setButtons();if(pollBusy)refreshPending=true;else readPower()}}
+async function refreshAssistantRequests(){
+ const root=document.getElementById('assistant-power-list');if(!root)return;
+ try{
+  const response=await fetch('/assistant/power/pending',{cache:'no-store'});
+  if(!response.ok)throw Error('Nicht erreichbar.');
+  const data=await response.json();root.replaceChildren();
+  if(!data.requests.length){root.textContent='Keine offenen Schaltanfragen.';return}
+  for(const req of data.requests){
+   const p=document.createElement('div');p.className='mapping-line';
+   const message=document.createElement('strong');message.textContent='KI-Anfrage: Steckdose '+(req.action==='on'?'einschalten':'ausschalten');
+   const approve=document.createElement('button');approve.type='button';approve.textContent='Jetzt '+(req.action==='on'?'einschalten':'ausschalten');
+   if(req.action==='off')approve.className='danger';
+   const reject=document.createElement('button');reject.type='button';reject.className='secondary';reject.textContent='Ablehnen';
+   approve.onclick=()=>decideAssistantPower(req,'approve');
+   reject.onclick=()=>decideAssistantPower(req,'reject');
+   p.append(message,document.createTextNode(' '),approve,document.createTextNode(' '),reject);root.append(p);
+  }
+ }catch(e){root.textContent='KI-Schaltanfragen konnten nicht gelesen werden.'}
+}
+async function decideAssistantPower(req,decision){
+ const root=document.getElementById('assistant-power-list');
+ const label=req.action==='on'?'einschalten':'ausschalten';
+ if(decision==='approve'&&!confirm('Steckdose wirklich '+label+'?'+(req.action==='off'?' Der Drucker muss sicher im Leerlauf sein.':'')))return;
+ root.querySelectorAll('button').forEach(b=>b.disabled=true);
+ try{
+  const body=new URLSearchParams({request_id:req.request_id,decision,confirm:'power-'+req.action,csrf_token:{{token|tojson}}});
+  const response=await fetch('/assistant/power/decision',{method:'POST',body});
+  const data=await response.json();
+  if(!response.ok)throw Error(data.error||'Schaltung nicht bestätigt.');
+  document.getElementById('tapo-status').textContent=decision==='reject'?'KI-Schaltanfrage abgelehnt.':data.result?.on?'Steckdose eingeschaltet.':'Steckdose ausgeschaltet.';
+  readPower(true);
+ }catch(e){document.getElementById('tapo-status').textContent=e.message}
+ finally{refreshAssistantRequests()}
+}
+if(configured){refreshAssistantRequests();setInterval(()=>{if(!document.hidden)refreshAssistantRequests()},5000)}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPoll();else if(configured&&document.getElementById('live-meter').checked)readPower()});window.addEventListener('pagehide',stopPoll);if(configured)readPower();
 </script>
 '''
