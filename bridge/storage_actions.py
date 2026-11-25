@@ -223,6 +223,28 @@ def register_actions(app,storage,decode,cache,refresh_idle,blocked,handlers,hist
         if not handlers:return jsonify(error='Druckstart nicht eingerichtet.'),503
         try:return jsonify(handlers['context']())
         except ValueError as e:return jsonify(error=str(e)),409
+    def preflight_from_cached(file, plate, mapping=None):
+        if not handlers or 'preflight' not in handlers:
+            raise ValueError('Druckvorprüfung nicht verfügbar.')
+        entry = decode(file)
+        if not entry['name'].lower().endswith('.3mf'):
+            raise ValueError('Nur geslicte 3MF-Dateien unterstützt.')
+        metadata = cached(entry)
+        if metadata is None:
+            raise ValueError('Datei noch nicht vollständig untersucht. Erst Dateidetails in der Weboberfläche öffnen.')
+        return handlers['preflight'](metadata, plate, mapping)
+
+    app.extensions['assistant_preflight'] = preflight_from_cached
+
+    @app.post('/storage/preflight')
+    def storage_preflight():
+        try:
+            mapping = json.loads(request.form.get('mapping','{}'))
+            plate = int(request.form.get('plate',''))
+            return jsonify(preflight_from_cached(request.form.get('file'), plate, mapping))
+        except (ValueError, KeyError, TypeError) as exc:
+            return jsonify(error=str(exc)), 409
+
     @app.post('/storage/start-review')
     def start_review():
         try:

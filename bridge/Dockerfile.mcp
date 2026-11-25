@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+COPY requirements.txt requirements-mcp.txt ./
+RUN pip install --no-cache-dir -r requirements-mcp.txt
+COPY . ./bridge
+# Optional stdio process only. NO MCP listening port and NO device/data volume.
+CMD ["python", "-m", "bridge.mcp_server"]

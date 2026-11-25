@@ -1,5 +1,12 @@
 # Änderungen
 
+## 2026-11-25 — Entwicklungszweig: MCP, 3MF-/Bestandsprüfung und freigegebene Tapo-Aktionen
+
+- Optionaler lokaler MCP-stdio-Prozess; separate Token-Authentifizierung und kuratierte, lesende Drucker-/AMS-/Inventar-/Kosten-/Journal- und Dateifunktionen. Keine Gerätegeheimnisse in den Antworten.
+- Reine Simulation der geslicten 3MF-Platte gegen Druckermodelldaten, Düse, tatsächliche AMS-Bindungen und bekannte Restgewichte; exakte Material-/Farberkennung, Summierung je Rolle, Hinweise auf Lagerrollen und klare Unsicherheitskennzeichnung. Im Dateidialog aufrufbar, unabhängig von der Druckstartfreigabe.
+- KI-gesteuerte Tapo-Ein-/Ausschaltung nur als kurzlebige Anfrage. Einmalige Freigabe in der bisherigen Weboberfläche, zweiter Bestätigungsdialog, tatsächliches Ausschalten nur mit bestehender frischer Leerlaufprüfung. Kein wiederholtes Schalten bei unklarer Rückmeldung.
+- Zusätzliche Tests der Vorprüfung und menschlichen Freigabe. **Keine Freigabe zur produktiven Schaltung oder Deployment durch dieses Commit.**
+
 ## 2026-11-18 — Korrekte Plattenbilder und dunkle Formdetails
 
 - Vorschaubilder werden zur tatsächlich enthaltenen G-Code-Modellplatte gewählt; Projektübersichten und ungeslicte andere Platten ersetzen kein passendes Plattenbild mehr. Größere Plattenbilder bevorzugt, Standardeintrag in neu geprüften Metadaten und 3D-Auswahl zur Archiv-Reihenfolge passend.

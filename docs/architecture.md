@@ -2,6 +2,10 @@
 
 Stand: 16. November 2026. Bedienabläufe und Screenshots stehen in der [Bedienungsanleitung](user-guide.md), Sicherung und Migration in [Plus-Betrieb](plus-operations.md).
 
+## Optionale KI-/MCP-Integration (Entwicklungsstand 25. November 2026)
+
+Ein separater MCP-stdio-Prozess spricht ausschließlich mit der vorhandenen Bridge über token-geschützte lokale `/api/assistant/*`-Routen. Die Bridge liefert kuratierte lesende Status-/AMS-/Inventar-/Journal-/Kostendaten und begrenzte, bereits vollständig geprüfte 3MF-Dateimetadaten. Die Simulation in `bridge/preflight.py` ist rein funktional und ersetzt nicht `prepare_start`, dessen Fingerabdruck oder Einmal-Startfreigabe. Schaltanfragen werden einmalig und zeitlich begrenzt durch `bridge/assistant_api.py` verwaltet. Eine Aktion erfolgt ausschließlich nach Browser-/CSRF-geschützter Bestätigung, über den bestehenden isolierten Tapo-Unterprozess und denselben Leerlaufschutz. Siehe [MCP-Dokumentation](mcp-preflight.md).
+
 ## Komponenten und Verbindungen
 
 | Verbindung | Aufgabe |

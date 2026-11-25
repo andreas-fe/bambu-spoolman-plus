@@ -1580,3 +1580,43 @@ def test_cost_snapshots_roundtrip_and_version_four_remains_importable(bridge,tmp
     with connection(target) as db:
         assert not db.execute('SELECT 1 FROM job_costs').fetchone()
         assert db.execute('SELECT purchase_price_minor FROM consumption_entries').fetchone()[0] is None
+
+
+def test_assistant_is_default_deny_and_loopback_only(bridge, monkeypatch):
+    b=bridge
+    client=b.app.test_client()
+    assert client.get('/api/assistant/status').status_code==403
+    monkeypatch.setenv('MCP_BRIDGE_TOKEN','a'*32)
+    assert client.get('/api/assistant/status').status_code==403
+    headers={'X-MCP-Bridge-Token':'a'*32}
+    assert client.get('/api/assistant/status',headers=headers,environ_overrides={'REMOTE_ADDR':'192.0.2.2'}).status_code==403
+    response=client.get('/api/assistant/status',headers=headers,environ_overrides={'REMOTE_ADDR':'127.0.0.1'})
+    assert response.status_code==200
+    assert 'access_code' not in str(response.json).lower()
+    assert 'password' not in str(response.json).lower()
+
+
+def test_assistant_power_switch_requires_web_csrf_and_explicit_decision(bridge,monkeypatch):
+    b=bridge
+    monkeypatch.setenv('MCP_BRIDGE_TOKEN','a'*32)
+    b.WEB_USERNAME, b.WEB_PASSWORD = 'tester', 'test-password'
+    headers={'X-MCP-Bridge-Token':'a'*32}
+    switched=Mock(return_value={'on':False,'observed_at':123})
+    b.app.extensions['assistant_tapo_switch']=switched
+    client=b.app.test_client()
+    data=client.post('/api/assistant/power/request',json={'action':'off'},headers=headers,
+                     environ_overrides={'REMOTE_ADDR':'127.0.0.1'})
+    assert data.status_code==202
+    ident=data.json['request_id']
+    switched.assert_not_called()
+    assert client.post('/assistant/power/decision',data={'request_id':ident,'decision':'approve','confirm':'power-off'}).status_code==401
+    switched.assert_not_called()
+    with client.session_transaction() as sess:
+        sess['csrf_token']='test-csrf'
+    decision=client.post('/assistant/power/decision',auth=('tester','test-password'),data={
+        'request_id':ident,'decision':'approve','confirm':'power-off','csrf_token':'test-csrf'})
+    assert decision.status_code==200 and decision.json['state']=='done'
+    switched.assert_called_once_with(False)
+    assert client.post('/assistant/power/decision',auth=('tester','test-password'),data={
+        'request_id':ident,'decision':'approve','confirm':'power-off','csrf_token':'test-csrf'}).status_code==409
+    switched.assert_called_once_with(False)

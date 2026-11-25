@@ -10,3 +10,8 @@ jobs:
           python-version: '3.11'
       - run: pip install -r bridge/requirements.txt pytest
       - run: python -m pytest -q
+      - run: pip install -r bridge/requirements-mcp.txt
+      - run: python -c "from bridge.mcp_server import mcp; assert mcp is not None; print('MCP import OK')"
+        env:
+          MCP_BRIDGE_TOKEN: ci-only-32-character-secret-for-mcp-smoke
+
