@@ -97,6 +97,19 @@ def register_storage(app,factory,blocked,refresh_idle,log,cache_path=None,namesp
         folder=str(PurePosixPath(entry['path']).parent)
         if safe_file(folder,entry['name'])!=entry['path']:raise ValueError('Ungültiger Dateipfad.')
         return entry
+    def assistant_files():
+        """List signed short-lived references without disclosing private credentials."""
+        if not storage.lock.acquire(timeout=0.5):
+            raise ValueError('Dateizugriff bereits belegt.')
+        try:
+            with storage.connection() as ftp:
+                files = [entry for folder in FOLDERS for entry in storage.listing(ftp, folder)]
+            return [dict(name=entry['name'], size=entry['size'],
+                         modified=entry['modified'], token=signer().dumps(entry))
+                    for entry in files if entry['name'].lower().endswith('.3mf')][:100]
+        finally:
+            storage.lock.release()
+    app.extensions['assistant_storage_files'] = assistant_files
     from .storage_actions import register_actions
     from .storage_rename import register_rename
     history_names=register_rename(app,storage,decode,cache,refresh_idle,blocked,log)
