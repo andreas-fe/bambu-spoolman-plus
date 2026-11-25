@@ -24,6 +24,21 @@ export MCP_BRIDGE_URL='http://127.0.0.1:7913'
 python -m bridge.mcp_server
 ```
 
+### QNAP-/Docker-Betrieb mit getrenntem MCP-Image
+
+Der MCP-Prozess wird nicht in der normalen Bridge automatisch gestartet. Ein optionales, ausschließlich für stdio gebautes Image ist vorhanden:
+
+```sh
+docker build -f bridge/Dockerfile.mcp -t bambu-spoolman-mcp:local bridge
+# Eine separate private Datei (chmod 600) enthält ausschließlich
+# MCP_BRIDGE_TOKEN=<derselbe starke Wert wie in der Bridge-Konfiguration>.
+# Nur für die Dauer der MCP-Sitzung als stdio-Prozess starten:
+docker run --rm -i --network container:bambu-spoolman-bridge \
+  --env-file /GESCHUETZTER/PFAD/mcp.env bambu-spoolman-mcp:local
+```
+
+Damit läuft die MCP-Bridge auf demselben Loopback-Netzwerk wie der Hauptcontainer. Den vollständigen Gerätezugangs-/Inventar-Datenbestand **nicht** in den MCP-Container mounten und ihm keine weiteren Zugangsdaten oder Docker-Socket-Rechte geben. Der MCP-Client muss diesen stdio-Befehl direkt beziehungsweise über eine sicher konfigurierte SSH-Sitzung starten. Dieser Weg liefert keinen öffentlichen MCP-Endpunkt und aktiviert keine Cloud-Anbindung.
+
 Die Bridge selbst muss mit demselben `MCP_BRIDGE_TOKEN` gestartet werden. Im Docker-/NAS-Betrieb muss der MCP-Prozess im **gleichen Netzwerk-Namespace wie die Bridge** laufen, wenn diese den Standard-Loopback-Endpunkt `127.0.0.1:7913` nutzt, beispielsweise über eine passende lokale Sidecar-/Container-Konfiguration. Das MCP-Programm kann nur auf Loopback-URLs zugreifen. `stdio` wird normalerweise vom MCP-Client gestartet, nicht manuell für die interaktive Eingabe verwendet. Die Compose-Datei startet keinen MCP-Server automatisch.
 
 ## MCP-Werkzeuge
