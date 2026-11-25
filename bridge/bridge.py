@@ -1476,10 +1476,14 @@ def assistant_power(value):
     return app.extensions['assistant_tapo_switch'](value)
 
 
+def assistant_power_status():
+    return app.extensions['read_tapo_power']()
+
+
 register_assistant(app,status=assistant_printer_snapshot,stock=assistant_stock,
                    journal=assistant_journal,costs=assistant_costs,
                    preflight=assistant_preflight,files=assistant_files,
-                   power=assistant_power)
+                   power=assistant_power,power_status=assistant_power_status)
 
 
 def auto_power_safe(fresh=False):
