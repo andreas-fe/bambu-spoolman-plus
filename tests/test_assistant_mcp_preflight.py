@@ -108,7 +108,8 @@ def assistant_test_app():
                        stock=lambda: [], journal=lambda: [], costs=lambda: [],
                        files=lambda: [], preflight=lambda *args: {"simulation": True},
                        power=lambda value: calls.append(value) or {"on": value},
-                       power_status=lambda: {"on": False, "power_w": 0.0})
+                       power_status=lambda: {"on": False, "power_w": 0.0},
+                       web_login_configured=lambda: True)
     return app.test_client(), calls
 
 
