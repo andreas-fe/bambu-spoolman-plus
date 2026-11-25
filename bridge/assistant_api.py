@@ -27,7 +27,7 @@ def authorized_request(req, token=None):
                 secrets.compare_digest(supplied.encode(), configured.encode()))
 
 
-def register_assistant(app, *, status, stock, journal, costs, preflight, files, power, power_status):
+def register_assistant(app, *, status, stock, journal, costs, preflight, files, power, power_status, web_login_configured=lambda: False):
     lock = threading.Lock()
     pending = {}
 
@@ -90,6 +90,8 @@ def register_assistant(app, *, status, stock, journal, costs, preflight, files, 
 
     @app.post("/api/assistant/power/request")
     def assistant_power_request():
+        if not web_login_configured():
+            return jsonify(error="KI-Schalten gesperrt: Web-Anmeldung muss eingerichtet sein."), 403
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or set(data) != {"action"} or data["action"] not in ("on", "off"):
             return jsonify(error="Nur Ein-/Ausschalten erlaubt."), 400
@@ -121,6 +123,8 @@ def register_assistant(app, *, status, stock, journal, costs, preflight, files, 
 
     @app.post("/assistant/power/decision")
     def assistant_power_decision():
+        if not web_login_configured():
+            return jsonify(error="KI-Schalten gesperrt: Web-Anmeldung muss eingerichtet sein."), 403
         ident = request.form.get("request_id", "")
         decision = request.form.get("decision", "")
         with lock:
