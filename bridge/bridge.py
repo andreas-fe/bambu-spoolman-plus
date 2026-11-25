@@ -12,6 +12,8 @@ if __package__ in (None, ""):
 from bridge.inventory_db import apply_migrations, connection as inventory_connection
 from bridge.inventory_service import InventoryService, InventoryError
 from bridge.inventory_api import register_inventory, spoolman_view
+from bridge.preflight import review_plate
+from bridge.assistant_api import register_assistant, authorized_request
 from bridge.devices import register_devices
 from bridge.printer_telemetry import PrinterTelemetry, AMSCommandRejected
 from bridge.ui import render_ui, SETTINGS_PAGE
@@ -1336,6 +1338,38 @@ def storage_context():
     return dict(model=os.getenv('BAMBU_MODEL','Bambu Lab A1'),nozzle=printer_status.get('nozzle_diameter'),slots=slots)
 
 
+def readonly_preflight_context():
+    """Snapshot only: no pushall, printer changes, FTPS start or IDLE requirement."""
+    from bridge.print_start import pressure_status
+    mapping=load_mapping()
+    spools=fetch_spoolman_spools()
+    by_id={str(s['id']):s for s in spools}
+    slots=[]
+    now=time.time()
+    for key in ('0','1','2','3','external'):
+        spool=by_id.get(str(mapping.get(key)),{})
+        tray=ams_state.get(int(key),{}) if key!='external' else {}
+        filament=spool.get('filament') or {}
+        available=bool(spool) if key=='external' else bool(
+            tray.get('known') and tray.get('available') and
+            0<=now-tray.get('seen_at',0)<=120)
+        slots.append(dict(slot=key,available=available,spool_id=spool.get('id'),
+                          material=(spool.get('material','') if key=='external' else tray.get('material','')),
+                          color=(spool.get('clean_color','') if key=='external' else tray.get('color','')),
+                          spool_material=spool.get('material') or filament.get('material',''),
+                          spool_color=spool.get('clean_color','')))
+    return dict(model=os.getenv('BAMBU_MODEL','Bambu Lab A1'),
+                nozzle=printer_status.get('nozzle_diameter'),
+                state=printer_status.get('state'),
+                connected=bool(mqtt_client and mqtt_client.is_connected()),
+                inventory_available=bool(spoolman_status.get('connected')),
+                slots=slots,spools=spools)
+
+
+def readonly_preflight(metadata,plate,mapping=None):
+    return review_plate(metadata,plate,readonly_preflight_context(),mapping)
+
+
 def storage_prepare(entry,metadata,choice):
     from bridge.print_start import prepare_start
     if storage_blocked(entry['name']):raise ValueError('Datei wird noch für einen offenen Auftrag benötigt.')
@@ -1384,11 +1418,68 @@ def storage_history(name):
     return [{**dict(r),'cost_label':print_costs.history_label(r['id'])} for r in rows if storage_name(name) in (storage_name(r['filename']),storage_name(r['subtask_name']))][:30]
 
 
-printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,read_state=storage_read_state,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history))
+printer_storage=register_storage(app,storage_ftp,storage_blocked,storage_idle,log,cache_path=DB_PATH.parent/"preview-cache.sqlite3",namespace=SERIAL+"|"+PRINTER_IP,read_state=storage_read_state,handlers=dict(context=storage_context,prepare=storage_prepare,start=storage_start,history=storage_history,preflight=readonly_preflight))
 
 
 devices_busy=register_devices(app, PRINTER_IP, ACCESS_CODE, printer_status, set_printer_light, refresh_printer_status,
                  shutdown_job_guard=lambda job_id:auto_power.permitted(job_id))
+
+
+def assistant_printer_snapshot():
+    current=dict(printer_status)
+    return dict(
+        state=current.get('state'),progress=current.get('progress'),
+        remaining_minutes=current.get('remaining_minutes'),
+        file=current.get('subtask_name'),active_slot=current.get('active_slot'),
+        state_seen_at=current.get('state_seen_at'),
+        connected=bool(mqtt_client and mqtt_client.is_connected()),
+        ams=[dict(slot=i,material=tray.get('material'),color=tray.get('color'),
+                  available=tray.get('available'),known=tray.get('known'),
+                  seen_at=tray.get('seen_at')) for i,tray in sorted(ams_state.items())],
+        inventory_backend=INVENTORY_BACKEND,simulation=DRY_RUN)
+
+
+def assistant_stock():
+    return [dict(id=s.get('id'),material=s.get('material'),
+                 color=s.get('clean_color'),remaining_weight=s.get('remaining_weight'),
+                 filament_name=(s.get('filament') or {}).get('name'),
+                 vendor=(s.get('filament') or {}).get('vendor',{}).get('name')
+                   if isinstance((s.get('filament') or {}).get('vendor'),dict) else None)
+            for s in fetch_spoolman_spools()][:500]
+
+
+def assistant_journal():
+    return [dict(created_at=e.get('created_at'),status=e.get('status'),
+                 grams=e.get('grams'),spool_id=e.get('spool_id'),
+                 filename=e.get('filename') or e.get('subtask_name'),
+                 estimated=e.get('estimated'))
+            for e in journal_page()['entries']]
+
+
+def assistant_costs():
+    with store.connection() as db:
+        rows=db.execute("SELECT id FROM jobs WHERE kind='PRINT' ORDER BY created_at DESC,rowid DESC LIMIT 10").fetchall()
+        return [cost_summary(db,row['id'],time.time()) for row in rows]
+
+
+def assistant_preflight(file,plate,mapping):
+    func=app.extensions.get('assistant_preflight')
+    if func is None:raise ValueError('Druckdatei-Prüfung nicht verfügbar.')
+    return func(file,plate,mapping)
+
+
+def assistant_files():
+    return app.extensions['assistant_storage_files']()
+
+
+def assistant_power(value):
+    return app.extensions['assistant_tapo_switch'](value)
+
+
+register_assistant(app,status=assistant_printer_snapshot,stock=assistant_stock,
+                   journal=assistant_journal,costs=assistant_costs,
+                   preflight=assistant_preflight,files=assistant_files,
+                   power=assistant_power)
 
 
 def auto_power_safe(fresh=False):
@@ -1737,6 +1828,10 @@ def job_mapping_forms():
 def protect_requests():
     if request.path == '/health':
         return None
+    if request.path.startswith('/api/assistant/'):
+        if not authorized_request(request):
+            return Response('Assistant-Zugriff nicht freigeschaltet.', 403)
+        return None  # Dedicated token checked before any CSRF/auth bypass.
     if WEB_USERNAME:
         auth = request.authorization
         if not auth or not secrets.compare_digest((auth.username or '').encode(), WEB_USERNAME.encode()) or not secrets.compare_digest((auth.password or '').encode(), WEB_PASSWORD.encode()):
